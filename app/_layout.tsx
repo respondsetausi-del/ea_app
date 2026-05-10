@@ -11,6 +11,7 @@ import { DynamicIsland } from "@/components/dynamic-island";
 import { RobotLogo } from "@/components/robot-logo";
 import { TradingWebView } from "@/components/trading-webview";
 import { CustomLoadingScreen } from "@/components/custom-loading-screen";
+import { AddToHomePrompt } from "@/components/add-to-home";
 
 // Early console suppression - must be at the very top
 if (typeof window !== 'undefined' && Platform.OS === 'web') {
@@ -218,6 +219,9 @@ function RootLayoutNav() {
         newSignal={newSignal}
         onSignalDismiss={dismissNewSignal}
       />
+
+      {/* Save to Home Screen prompt — shows on web before start */}
+      <AddToHomePrompt />
 
       {/* Trading WebView Modal */}
       <TradingWebView
