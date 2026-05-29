@@ -959,11 +959,13 @@ export const [AppProvider, useApp] = createContextHook<AppState>(() => {
   }, [eas, isBotActive, startSignalsMonitoring, stopSignalsMonitoring]);
 
   const placeManualTrade = useCallback((req: Omit<ManualTradeRequest, 'platform'> & { platform?: 'MT4' | 'MT5' }): PlaceManualTradeResult => {
-    const symbol = req.symbol.trim().toUpperCase();
+    // Preserve EXACT user input — no uppercasing, no normalization.
+    // ".US30." must stay ".US30." through the entire pipeline.
+    const symbol = req.symbol.trim();
     if (!symbol) return { ok: false, error: 'Missing symbol.' };
 
-    const inMt4 = mt4Symbols.some(s => s.symbol.toUpperCase() === symbol);
-    const inMt5 = mt5Symbols.some(s => s.symbol.toUpperCase() === symbol);
+    const inMt4 = mt4Symbols.some(s => s.symbol.toUpperCase() === symbol.toUpperCase());
+    const inMt5 = mt5Symbols.some(s => s.symbol.toUpperCase() === symbol.toUpperCase());
     const hasMt4Account = !!(mt4Account?.login && mt4Account?.password && mt4Account?.server);
     const hasMt5Account = !!(mt5Account?.login && mt5Account?.password && mt5Account?.server);
 

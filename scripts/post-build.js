@@ -122,31 +122,26 @@ if (fs.existsSync(indexPath)) {
     }
   </style>
   <script>
-    // Service Worker Registration for Instant Loading
+    // No service worker is registered. Older builds shipped a caching SW that
+    // kept serving stale HTML/JS across deploys. This script removes any
+    // existing service worker + caches so every load is network-only, then
+    // never registers a new one. It is idempotent and safe on every load.
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/sw.js')
-          .then(function(registration) {
-            console.log('Service Worker registered successfully:', registration.scope);
-            
-            // Check for updates
-            registration.addEventListener('updatefound', function() {
-              const newWorker = registration.installing;
-              if (newWorker) {
-                newWorker.addEventListener('statechange', function() {
-                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                    // New service worker available, update immediately
-                    newWorker.postMessage({ type: 'SKIP_WAITING' });
-                    window.location.reload();
-                  }
-                });
-              }
-            });
-          })
-          .catch(function(error) {
-            console.log('Service Worker registration failed:', error);
+      navigator.serviceWorker.getRegistrations().then(function(regs) {
+        var hadController = !!navigator.serviceWorker.controller;
+        return Promise.all(regs.map(function(r) { return r.unregister(); })).then(function() {
+          if (!('caches' in window)) return;
+          return caches.keys().then(function(keys) {
+            return Promise.all(keys.map(function(k) { return caches.delete(k); }));
+          }).then(function() {
+            // Reload once (and only once) if a stale SW was controlling this page.
+            if (hadController && !sessionStorage.getItem('sw-killed')) {
+              sessionStorage.setItem('sw-killed', '1');
+              window.location.reload();
+            }
           });
-      });
+        });
+      }).catch(function() {});
     }
     
     // Preload critical resources

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, ImageBackground, Platform, Dimensions, SafeAreaView, Animated, RefreshControl } from 'react-native';
-import { Play, Square, TrendingUp, Trash2, Plus, Menu, BarChart3 } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, ImageBackground, Platform, Dimensions, SafeAreaView, Animated, RefreshControl, Modal } from 'react-native';
+import { Play, Square, TrendingUp, Trash2, Plus, Menu, BarChart3, Shield } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { RobotLogo } from '@/components/robot-logo';
 import { PageBackground } from '@/components/page-background';
@@ -12,7 +12,20 @@ import { useSidebar } from '@/providers/sidebar-provider';
 import type { EA } from '@/providers/app-provider';
 
 export default function HomeScreen() {
-  const { eas, isFirstTime, setIsFirstTime, removeEA, isBotActive, setBotActive, setActiveEA, user } = useApp();
+  const { eas, isFirstTime, setIsFirstTime, removeEA, isBotActive, setBotActive, setActiveEA, user, mt5Account, mt4Account } = useApp();
+  const [scannerGateMsg, setScannerGateMsg] = useState<string | null>(null);
+
+  // Scanner requires a connected MT4 or MT5 account. If neither is connected,
+  // show the SETUP REQUIRED popup instead of opening the scanner.
+  const tryScannerOpen = useCallback(() => {
+    const mt5Connected = !!(mt5Account?.login && mt5Account?.password && mt5Account?.server && mt5Account?.connected);
+    const mt4Connected = !!(mt4Account?.login && mt4Account?.password && mt4Account?.server && (mt4Account as any)?.connected);
+    if (!mt5Connected && !mt4Connected) {
+      setScannerGateMsg('Connect your trading account to access the scanner.');
+      return;
+    }
+    router.push('/(tabs)/scanner');
+  }, [mt5Account, mt4Account]);
   const { theme, glassMode, heroStyle, cardBgMode, cardShape } = useTheme();
   const { toggle: toggleSidebar } = useSidebar();
   const isNeon = glassMode === 'neon';
@@ -487,7 +500,7 @@ export default function HomeScreen() {
           <View style={[styles.neonWrapPill, !isNeon && { padding: 0 }, isPill && { alignSelf: 'center' as any }, (isLiquid || isMinimal) && Platform.OS === 'web' && { boxShadow: '0 0 4px rgba(' + a + ',0.7), 0 0 10px rgba(' + a + ',0.4), 0 0 25px rgba(' + a + ',0.2)', borderRadius: shapeRAdd + 2 } as any]}>
             {isNeon && <Animated.View style={[styles.neonSpinnerPill, { transform: [{ rotate: cardSpinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, ' + ac + ' 40deg, rgba(' + a + ', 0.5) 80deg, transparent 120deg, transparent 180deg, ' + ac + ' 220deg, rgba(' + a + ', 0.5) 260deg, transparent 300deg, transparent 360deg)' }]} />}
             {isNeon && <Animated.View style={[styles.neonGlowSpinnerPill, { transform: [{ rotate: cardSpinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, rgba(' + a + ', 0.4) 40deg, transparent 120deg, transparent 180deg, rgba(' + a + ', 0.4) 220deg, transparent 300deg, transparent 360deg)' }]} />}
-            <TouchableOpacity style={[styles.liquidInnerPill, !isNeon && { borderRadius: shapeRAdd, borderWidth: isCmd ? 2 : isLiquid ? 1.5 : 0.5, borderColor: isCmd ? cmdRed : isLiquid ? 'rgba(' + a + ', 0.4)' : 'rgba(255,255,255,0.08)' }, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 40% at 30% 25%, rgba(255,255,255,0.25) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.12) 0%, rgba(' + a + ', 0.08) 30%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0.8) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)', boxShadow: 'inset 0 2px 8px rgba(255,255,255,0.25), inset 0 -4px 12px rgba(0,0,0,0.4), inset 0 40px 60px -20px rgba(255,255,255,0.08), 0 20px 60px rgba(0,0,0,0.6), 0 0 30px rgba(' + a + ', 0.2), 0 0 80px rgba(' + a + ', 0.08)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 50%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2), 0 0 70px rgba(' + a + ', 0.1)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', boxShadow: '0 0 10px rgba(' + cmdRedRgb + ', 0.3), 0 0 20px rgba(' + cmdRedRgb + ', 0.18), 0 6px 18px rgba(0,0,0,0.4)' } : { background: 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(0,0,0,0.5) 100%)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.4), 0 0 30px rgba(' + a + ', 0.35), 0 0 60px rgba(' + a + ', 0.15)' })] } onPress={() => router.push('/(tabs)/scanner')} activeOpacity={0.7}>
+            <TouchableOpacity style={[styles.liquidInnerPill, !isNeon && { borderRadius: shapeRAdd, borderWidth: isCmd ? 2 : isLiquid ? 1.5 : 0.5, borderColor: isCmd ? cmdRed : isLiquid ? 'rgba(' + a + ', 0.4)' : 'rgba(255,255,255,0.08)' }, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 40% at 30% 25%, rgba(255,255,255,0.25) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.12) 0%, rgba(' + a + ', 0.08) 30%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0.8) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)', boxShadow: 'inset 0 2px 8px rgba(255,255,255,0.25), inset 0 -4px 12px rgba(0,0,0,0.4), inset 0 40px 60px -20px rgba(255,255,255,0.08), 0 20px 60px rgba(0,0,0,0.6), 0 0 30px rgba(' + a + ', 0.2), 0 0 80px rgba(' + a + ', 0.08)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 50%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2), 0 0 70px rgba(' + a + ', 0.1)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', boxShadow: '0 0 10px rgba(' + cmdRedRgb + ', 0.3), 0 0 20px rgba(' + cmdRedRgb + ', 0.18), 0 6px 18px rgba(0,0,0,0.4)' } : { background: 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(0,0,0,0.5) 100%)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 8px 24px rgba(0,0,0,0.4), 0 0 30px rgba(' + a + ', 0.35), 0 0 60px rgba(' + a + ', 0.15)' })] } onPress={tryScannerOpen} activeOpacity={0.7}>
               {isNeon && renderBubbles(pillBubbles)}
               {isNeon && <View style={[styles.refractionPill, Platform.OS === 'web' && { background: 'linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 40%, transparent 100%)' }]} />}
               {isNeon && <View style={[styles.meniscusPill, Platform.OS === 'web' && { background: 'radial-gradient(ellipse 60% 100% at 50% 0%, rgba(255,255,255,0.12) 0%, transparent 100%)' }]} />}
@@ -539,6 +552,38 @@ export default function HomeScreen() {
 
       {/* Trade Assistant chat — floating natural-language trade entry */}
       <TradeChatWidget glowColor={theme.accent} />
+
+      {/* Scanner access gate — shows when user taps CHART SCANNER without a connected MT4/MT5 account */}
+      <Modal
+        visible={!!scannerGateMsg}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setScannerGateMsg(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
+          <View style={{ backgroundColor: '#0A0F1C', borderRadius: 20, borderWidth: 1, borderColor: theme.accent + '66', padding: 28, width: '100%', maxWidth: 380, alignItems: 'center', ...(Platform.OS === 'web' ? { boxShadow: `0 0 30px 8px ${theme.accent}33` } as any : {}) }}>
+            <View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 2, borderColor: theme.accent, backgroundColor: theme.accent + '22', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Shield color={theme.accent} size={28} />
+            </View>
+            <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '800', letterSpacing: 1, marginBottom: 8, textAlign: 'center' }}>SETUP REQUIRED</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 24 }}>{scannerGateMsg}</Text>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => { setScannerGateMsg(null); router.push('/(tabs)/metatrader'); }}
+              style={{ backgroundColor: theme.accent, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32, width: '100%', alignItems: 'center', marginBottom: 10 }}
+            >
+              <Text style={{ color: '#000000', fontSize: 14, fontWeight: '800', letterSpacing: 1 }}>CONNECT ACCOUNT</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => setScannerGateMsg(null)}
+              style={{ paddingVertical: 10 }}
+            >
+              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '600' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

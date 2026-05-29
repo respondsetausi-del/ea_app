@@ -1848,12 +1848,6 @@ export default function MetaTraderScreen() {
               >
                 <Text style={[styles.tabText, activeTab === 'MT5' && { color: ac }]}>MT5 ACCOUNT</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.tab, activeTab === 'MT4' && styles.activeTab, activeTab === 'MT4' && Platform.OS === 'web' && { boxShadow: '0 0 12px rgba(' + a + ', 0.3), inset 0 1px 2px rgba(255,255,255,0.1)' }]}
-                onPress={() => setActiveTab('MT4')}
-              >
-                <Text style={[styles.tabText, activeTab === 'MT4' && { color: ac }]}>MT4 ACCOUNT</Text>
-              </TouchableOpacity>
             </View>
           </View>
 

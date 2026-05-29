@@ -142,10 +142,17 @@ async function serveStatic(request: Request): Promise<Response> {
           break;
       }
 
+      // Service worker must never be cached — we need the browser to fetch
+      // the kill-switch version immediately on the next visit so any stale SW
+      // from a previous build gets replaced and unregistered.
+      const isServiceWorker = filePath.endsWith('/sw.js') || filePath === '/sw.js';
       return new Response(file, {
         headers: {
           'Content-Type': contentType,
-          'Cache-Control': ext === '.html' ? 'no-cache, no-store, must-revalidate' : 'public, max-age=31536000',
+          'Cache-Control': (ext === '.html' || isServiceWorker)
+            ? 'no-cache, no-store, must-revalidate'
+            : 'public, max-age=31536000',
+          ...(isServiceWorker ? { 'Service-Worker-Allowed': '/' } : {}),
         },
       });
     }
@@ -484,7 +491,10 @@ async function handleMT5Proxy(request: Request): Promise<Response> {
                          console.log('MT5 Trading: Starting trade', (tradeIndex + 1), 'of', numberOfTrades);
                          sendMessage('step', 'Executing trade ' + (tradeIndex + 1) + ' of ' + numberOfTrades + ' for ${asset}...');
                          
-                         // Search for the specific asset - Universal approach
+                         // Type the EXACT symbol into MT5's search box and click
+                         // whatever MT5 returns as the first result. No fuzzy
+                         // matching, no .includes(), no .mic guessing — MT5's
+                         // own search decides what matches the user's input.
                         const searchField = document.querySelector('input[placeholder="Search symbol"]') ||
                                           document.querySelector('input[placeholder*="Search"]') ||
                                           document.querySelector('input[placeholder*="search"]');
@@ -499,54 +509,30 @@ async function handleMT5Proxy(request: Request): Promise<Response> {
                           console.log('MT5 Trading: Searched for ${asset}');
                           await new Promise(r => setTimeout(r, 1500));
                         }
-                        
-                        // Select the asset - Try multiple approaches
+
+                        // Click the first symbol result MT5 returned.
                         let assetSelected = false;
-                        
-                        // Try RazorMarkets selector first
-                        const razorAsset = document.querySelector('.name.svelte-19bwscl .symbol.svelte-19bwscl');
-                        if (razorAsset && razorAsset.textContent.includes('${asset}')) {
-                          razorAsset.click();
+                        const firstResult =
+                          document.querySelector('.name.svelte-19bwscl .symbol.svelte-19bwscl') ||
+                          document.querySelector('.symbol.svelte-19bwscl') ||
+                          document.querySelector('[class*="symbol"]');
+                        if (firstResult) {
+                          firstResult.click();
                           assetSelected = true;
-                          console.log('MT5 Trading: Selected ${asset} using RazorMarkets selector');
+                          console.log('MT5 Trading: Clicked first search result for ${asset}: "' + (firstResult.textContent || '').trim() + '"');
                         }
-                        
-                        // Try generic symbol selector
-                        if (!assetSelected) {
-                          const allSymbols = document.querySelectorAll('[class*="symbol"]');
-                          for (let i = 0; i < allSymbols.length; i++) {
-                            if (allSymbols[i].textContent.trim() === '${asset}' || 
-                                allSymbols[i].textContent.includes('${asset}')) {
-                              allSymbols[i].click();
-                              assetSelected = true;
-                              console.log('MT5 Trading: Selected ${asset} using generic selector');
-                              break;
-                            }
-                          }
-                        }
-                        
-                        // Try text-based search (AccuMarkets and others)
-                        if (!assetSelected) {
-                          const allElements = document.querySelectorAll('*');
-                          for (let i = 0; i < allElements.length; i++) {
-                            const text = allElements[i].textContent.trim();
-                            if (text === '${asset}' || text === '${asset}.mic') {
-                              const clickable = allElements[i].closest('button, [role="button"], [onclick], td, tr');
-                              if (clickable || allElements[i].tagName === 'BUTTON') {
-                                (clickable || allElements[i]).click();
-                                assetSelected = true;
-                                console.log('MT5 Trading: Selected ${asset} using text-based selector');
-                                break;
-                              }
-                            }
-                          }
-                        }
-                        
+
                         if (assetSelected) {
                           sendMessage('step', 'Asset ${asset} selected for trade ' + (tradeIndex + 1) + '...');
                           await new Promise(r => setTimeout(r, 1500));
                         } else {
-                          console.log('MT5 Trading: WARNING - Could not select ${asset}');
+                          // ABORT — never fire trades on whatever chart MT5 is
+                          // currently showing. Better to fail loudly than to
+                          // place trades on the wrong asset.
+                          sendMessage('step', '❌ No search result for ${asset}. Aborting to prevent wrong-asset trade.');
+                          sendMessage('error', 'No search result for ${asset} — trade aborted to prevent placing on wrong asset.');
+                          console.error('MT5 Trading: ABORT — no search result for ${asset}, refusing to fire trades on stale chart');
+                          return;
                         }
                         
                         // Open order dialog - Universal approach

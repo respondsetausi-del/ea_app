@@ -14,6 +14,7 @@ import {
   Easing,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { TextInput } from 'react-native';
 import {
   ArrowLeft,
   Upload,
@@ -25,6 +26,8 @@ import {
   Clock,
   History,
   Trash2,
+  ChevronDown,
+  Shield,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -41,6 +44,8 @@ import { ConfidenceGauge } from '@/components/confidence-gauge';
 import { Typewriter } from '@/components/typewriter';
 import { ParticleBurst } from '@/components/particle-burst';
 import { useTheme } from '@/providers/theme-provider';
+import { useApp } from '@/providers/app-provider';
+import { BROKER_SYMBOLS } from '@/constants/broker-symbols';
 
 type ScanHistoryEntry = {
   id: string;
@@ -55,9 +60,11 @@ type ScanHistoryEntry = {
 };
 
 const SCAN_HISTORY_KEY = 'scanHistory.v1';
+const SCAN_SYMBOL_KEY = 'scanSymbol.v1';
 const SIGNAL_TTL_MS = 15 * 60 * 1000;
 
 export default function ScannerScreen() {
+  const { mt4Symbols, mt5Symbols, placeManualTrade } = useApp();
   const { theme } = useTheme();
   const accent = theme.accent;
 
@@ -78,6 +85,40 @@ export default function ScannerScreen() {
   // Scan history (last 10 signals, persisted in AsyncStorage).
   const [scanHistory, setScanHistory] = useState<ScanHistoryEntry[]>([]);
   const [historyOpen, setHistoryOpen] = useState<boolean>(false);
+
+  // ── Symbol picker / trade config (mirrors ea-converter scanner) ──
+  const [tradeSymbol, setTradeSymbol] = useState<string>('');
+  const [tradeLot, setTradeLot] = useState<string>('0.01');
+  const [tradeCount, setTradeCount] = useState<string>('1');
+  const [symbolDropdownOpen, setSymbolDropdownOpen] = useState<boolean>(false);
+
+  // Look up a symbol's saved lot / count from MT4/MT5 config (if any).
+  const lookupSymbolConfig = useCallback((sym: string) => {
+    if (!sym) return undefined;
+    const m5 = (mt5Symbols || []).find(s => s.symbol === sym);
+    if (m5) return { lot: m5.lotSize, count: m5.numberOfTrades, platform: 'MT5' as const };
+    const m4 = (mt4Symbols || []).find(s => s.symbol === sym);
+    if (m4) return { lot: m4.lotSize, count: m4.numberOfTrades, platform: 'MT4' as const };
+    return undefined;
+  }, [mt4Symbols, mt5Symbols]);
+
+  // Hydrate last-picked scan symbol on mount.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sym = await AsyncStorage.getItem(SCAN_SYMBOL_KEY);
+        if (cancelled || !sym) return;
+        setTradeSymbol(sym);
+        const cfg = lookupSymbolConfig(sym);
+        if (cfg) {
+          setTradeLot(cfg.lot);
+          setTradeCount(cfg.count);
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Each scan holds the revealed result for a random 10–20s so the phase
   // progression has room to play out and the experience feels like genuine
@@ -169,7 +210,29 @@ export default function ScannerScreen() {
       AsyncStorage.setItem(SCAN_HISTORY_KEY, JSON.stringify(next)).catch(() => {});
       return next;
     });
-  }, []);
+
+    // ── AUTO-EXECUTE: fire trade immediately after scan ──────────
+    // Scanner uses the EXACT symbol selected on the scanner page —
+    // no uppercasing, no normalization. ".US30." stays ".US30.".
+    const action = result.signal.action;
+    if (action === 'BUY' || action === 'SELL') {
+      const sym = (tradeSymbol || '').trim();
+      const cfg = lookupSymbolConfig(sym);
+      const lot = parseFloat(tradeLot.trim() || cfg?.lot || '0.01');
+      const count = parseInt(tradeCount.trim() || cfg?.count || '1', 10);
+      if (sym && isFinite(lot) && lot > 0) {
+        console.log('[AUTO-EXEC] Firing exact symbol:', sym, action, lot, 'x', count);
+        const execResult = placeManualTrade({ symbol: sym, action, lot, count, platform: 'MT5' });
+        if (!execResult.ok) {
+          if (Platform.OS === 'web') window.alert('[AUTO-EXEC FAILED] ' + (execResult.error || 'Unknown error'));
+        }
+      } else if (!sym) {
+        if (Platform.OS === 'web') window.alert('[AUTO-EXEC BLOCKED] Please select a symbol on the scanner before scanning.');
+      } else {
+        if (Platform.OS === 'web') window.alert('[AUTO-EXEC BLOCKED] Invalid lot size: ' + lot);
+      }
+    }
+  }, [tradeSymbol, tradeLot, tradeCount, lookupSymbolConfig, placeManualTrade]);
 
   // Holds the real analysis result until at least `scanTargetMsRef.current`
   // has elapsed since the scan started. This is what makes each scan feel
@@ -722,6 +785,124 @@ export default function ScannerScreen() {
           </View>
         )}
 
+        {/* ── Symbol dropdown ──────────────────────────────────── */}
+        <View style={[styles.scannerSymbolPicker, { borderColor: accent + '44' }]}>
+          <Text style={[styles.scannerSymbolLabel, { color: accent }]}>SELECT SYMBOL</Text>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => setSymbolDropdownOpen(v => !v)}
+            style={[styles.scannerDropdownTrigger, { borderColor: accent + '66' }]}
+          >
+            <Text style={[styles.scannerDropdownValue, { color: tradeSymbol.trim() ? '#FFFFFF' : '#4A5568' }]}>
+              {tradeSymbol.trim() || 'Select a symbol...'}
+            </Text>
+            <ChevronDown
+              color={accent}
+              size={18}
+              style={{ transform: [{ rotate: symbolDropdownOpen ? '180deg' : '0deg' }] }}
+            />
+          </TouchableOpacity>
+
+          {symbolDropdownOpen && (
+            <ScrollView style={[styles.scannerDropdownList, { borderColor: accent + '44', maxHeight: 300 }]} nestedScrollEnabled>
+              {BROKER_SYMBOLS.map(cat => (
+                <View key={cat.name}>
+                  <View style={[styles.scannerDropdownCatHeader, { borderBottomColor: accent + '22' }]}>
+                    <Text style={[styles.scannerDropdownCatText, { color: accent }]}>
+                      {cat.name} ({cat.symbols.length})
+                    </Text>
+                  </View>
+                  {cat.symbols.map(s => {
+                    const active = s.symbol === tradeSymbol.trim();
+                    const cfg = lookupSymbolConfig(s.symbol);
+                    return (
+                      <TouchableOpacity
+                        key={s.symbol}
+                        onPress={() => {
+                          setTradeSymbol(s.symbol);
+                          if (cfg) {
+                            setTradeLot(cfg.lot);
+                            setTradeCount(cfg.count);
+                          }
+                          AsyncStorage.setItem(SCAN_SYMBOL_KEY, s.symbol).catch(() => {});
+                          setSymbolDropdownOpen(false);
+                        }}
+                        activeOpacity={0.7}
+                        style={[
+                          styles.scannerDropdownItem,
+                          {
+                            borderColor: active ? accent + '44' : 'transparent',
+                            backgroundColor: active ? accent + '18' : 'transparent',
+                          },
+                        ]}
+                      >
+                        <View>
+                          <Text style={[styles.scannerDropdownItemText, { color: active ? accent : '#FFFFFF' }]}>
+                            {s.symbol}
+                          </Text>
+                          <Text style={[styles.scannerDropdownItemDesc, { color: '#6B7280' }]}>
+                            {s.description}
+                          </Text>
+                        </View>
+                        {cfg && (
+                          <Text style={[styles.scannerDropdownItemMeta, { color: accent + '99' }]}>
+                            {cfg.lot} lot
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))}
+            </ScrollView>
+          )}
+
+          {!symbolDropdownOpen && (
+            <TextInput
+              value={tradeSymbol}
+              onChangeText={t => {
+                setTradeSymbol(t);
+                const cfg = lookupSymbolConfig(t);
+                if (cfg) {
+                  setTradeLot(cfg.lot);
+                  setTradeCount(cfg.count);
+                }
+                AsyncStorage.setItem(SCAN_SYMBOL_KEY, t).catch(() => {});
+              }}
+              placeholder="Or type manually: e.g. .US30."
+              placeholderTextColor="#4A5568"
+              autoCorrect={false}
+              style={[styles.scannerSymbolInput, { borderColor: accent + '33', marginTop: 6 }]}
+            />
+          )}
+        </View>
+
+        {/* ── Lot size + count config ──────────────────────────── */}
+        <View style={[styles.scannerLotRow, { borderColor: accent + '44' }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.scannerSymbolLabel, { color: accent }]}>LOT SIZE</Text>
+            <TextInput
+              value={tradeLot}
+              onChangeText={setTradeLot}
+              placeholder="0.01"
+              placeholderTextColor="#4A5568"
+              keyboardType="decimal-pad"
+              style={[styles.scannerSymbolInput, { borderColor: accent + '66' }]}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.scannerSymbolLabel, { color: accent }]}>TRADES</Text>
+            <TextInput
+              value={tradeCount}
+              onChangeText={setTradeCount}
+              placeholder="1"
+              placeholderTextColor="#4A5568"
+              keyboardType="number-pad"
+              style={[styles.scannerSymbolInput, { borderColor: accent + '66' }]}
+            />
+          </View>
+        </View>
+
         {/* Upload / Preview area */}
         <TouchableOpacity
           activeOpacity={0.8}
@@ -968,6 +1149,88 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     textAlign: 'center',
+  },
+  // Symbol picker / dropdown / lot inputs (ported from ea-converter)
+  scannerSymbolPicker: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: '#080D1A',
+  },
+  scannerSymbolLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    marginBottom: 6,
+  },
+  scannerDropdownTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#000',
+  },
+  scannerDropdownValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+  },
+  scannerDropdownList: {
+    marginTop: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    backgroundColor: '#000',
+  },
+  scannerDropdownCatHeader: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  scannerDropdownCatText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  scannerDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderLeftWidth: 2,
+  },
+  scannerDropdownItemText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  scannerDropdownItemDesc: {
+    fontSize: 11,
+    marginTop: 2,
+  },
+  scannerDropdownItemMeta: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  scannerSymbolInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    backgroundColor: '#000',
+  },
+  scannerLotRow: {
+    flexDirection: 'row',
+    gap: 12,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: '#080D1A',
   },
   scannerDropzone: {
     borderRadius: 16,
