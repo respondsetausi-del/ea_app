@@ -30,9 +30,9 @@ export default function HomeScreen() {
     try { (mt5Symbols || []).forEach((m) => { try { deactivateMT5Symbol(m.symbol); } catch {} }); } catch {}
     try { activateMT5Symbol({ symbol, lotSize: String(lot), numberOfTrades: String(count), direction: 'BOTH' }); } catch {}
     setBotActive(true);
-    try { await apiService.startBatch(uuid, { symbol, volume: lot, count, intervalMinutes: 10, comment: 'TradePort' }); }
+    try { await apiService.startBatch(uuid, { symbol, volume: lot, count, intervalMinutes: 10, comment: (eas?.[0]?.name || 'Robot') }); }
     catch (e: any) { console.error('[quickstart] startBatch error:', e?.message || e); }
-  }, [mt5Account?.uuid, mt5Symbols, activateMT5Symbol, deactivateMT5Symbol, setBotActive]);
+  }, [mt5Account?.uuid, mt5Symbols, activateMT5Symbol, deactivateMT5Symbol, setBotActive, eas]);
 
   const handleToggleBot = useCallback(async () => {
     if (isBotActive) {

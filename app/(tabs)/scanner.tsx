@@ -65,7 +65,7 @@ const SCAN_SYMBOL_KEY = 'scanSymbol.v1';
 const SIGNAL_TTL_MS = 15 * 60 * 1000;
 
 export default function ScannerScreen() {
-  const { mt4Symbols, mt5Symbols, placeManualTrade, mt5Account } = useApp();
+  const { mt4Symbols, mt5Symbols, placeManualTrade, mt5Account, eas } = useApp();
   const { theme } = useTheme();
   const accent = theme.accent;
 
@@ -223,14 +223,14 @@ export default function ScannerScreen() {
       if (sym && uuid && isFinite(lot) && lot > 0) {
         const operation = action === 'BUY' ? 'Buy' : 'Sell';
         Promise.all(Array.from({ length: count }, () =>
-          apiService.sendMT5Trade({ id: uuid, action: 'open', symbol: sym, operation, volume: lot, comment: 'Chart Scanner' })
+          apiService.sendMT5Trade({ id: uuid, action: 'open', symbol: sym, operation, volume: lot, comment: (eas?.[0]?.name || 'Robot') })
             .catch((e: any) => console.error('[scanner] auto-exec error:', e?.message || e)),
         )).catch(() => {});
       } else if (!sym) {
         console.warn('[scanner] auto-exec skipped: no symbol selected');
       }
     }
-  }, [tradeSymbol, tradeLot, tradeCount, lookupSymbolConfig, mt5Account?.uuid]);
+  }, [tradeSymbol, tradeLot, tradeCount, lookupSymbolConfig, mt5Account?.uuid, eas]);
 
   // Holds the real analysis result until at least `scanTargetMsRef.current`
   // has elapsed since the scan started. This is what makes each scan feel
