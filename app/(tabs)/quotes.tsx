@@ -32,7 +32,7 @@ const mockQuotes: Quote[] = [
 ];
 
 export default function QuotesScreen() {
-  const { eas, activeSymbols, mt4Symbols, mt5Symbols } = useApp();
+  const { eas, activeSymbols, mt4Symbols, mt5Symbols, mt5Account } = useApp();
   const { theme: thm, glassMode } = useTheme();
   const a = thm.accentRgb;
   const ac = thm.accent;
@@ -75,6 +75,19 @@ export default function QuotesScreen() {
         setLoading(true);
       }
       setError(null);
+
+      // Prefer the connected MT5 account's real broker symbols (Api2Trade pull).
+      if (mt5Account?.uuid && mt5Account.connected) {
+        const list = await apiService.getMT5Symbols(mt5Account.uuid);
+        const syms = Array.isArray(list) ? list : [];
+        setApiSymbols(syms.map((s) => ({ id: s, name: s })));
+        setQuotes(syms.map((symbolName) => {
+          const mt5Config = mt5Symbols.find((s) => s.symbol === symbolName);
+          const lot = mt5Config ? (Number.parseFloat(mt5Config.lotSize ?? '0.01') || 0.01) : 0.01;
+          return { symbol: symbolName, lotSize: lot, platform: 'MT5' as const, direction: (mt5Config?.direction ?? 'BUY') as 'BUY' | 'SELL' | 'BOTH' };
+        }));
+        return;
+      }
 
       // If we have a connected EA with phone secret, fetch from API
       let response: { data: ApiSymbol[] } = { data: [] };
@@ -161,7 +174,7 @@ export default function QuotesScreen() {
         setRefreshing(false);
       }, showRefreshIndicator ? 300 : 0);
     }
-  }, [activeSymbols, mt4Symbols, mt5Symbols, quotes.length]);
+  }, [activeSymbols, mt4Symbols, mt5Symbols, quotes.length, mt5Account?.uuid, mt5Account?.connected]);
 
   // Initial load and refresh when symbols change
   useEffect(() => {

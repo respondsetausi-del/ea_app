@@ -40,6 +40,7 @@ export interface MT5Account {
   password: string;
   server: string;
   connected: boolean;
+  uuid?: string;
 }
 
 export interface ActiveSymbol {

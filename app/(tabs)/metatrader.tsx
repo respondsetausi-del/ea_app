@@ -7,6 +7,7 @@ import SimpleWebView from '../../components/simple-webview';
 import InjectableWebView from '../../components/injectable-webview';
 import FallbackWebView from '../../components/fallback-webview';
 import { Eye, EyeOff, Search, Server, ExternalLink, Shield, RefreshCw, X, Menu } from 'lucide-react-native';
+import { apiService } from '@/services/api';
 import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
 import { PageBackground } from '@/components/page-background';
@@ -1803,18 +1804,48 @@ export default function MetaTraderScreen() {
     `;
   };
 
+  // Api2Trade connect for MT5 — establishes a session UUID (no web terminal).
+  const handleApi2TradeConnect = async () => {
+    try {
+      setIsAuthenticating(true);
+      const result = await apiService.connectMT5(server.trim(), login.trim(), password.trim());
+      if (!result?.uuid) throw new Error('No session returned.');
+      setMT5Account({ login: login.trim(), password: password.trim(), server: server.trim(), connected: true, uuid: result.uuid });
+      Alert.alert('Success', 'MT5 account connected.');
+    } catch (e: any) {
+      Alert.alert('Connection Failed', e?.message || 'Could not connect account.');
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  // MT5 (Api2Trade) disconnect — tears down the session, keeps the fields filled.
+  const handleApi2TradeDisconnect = async () => {
+    try {
+      if (mt5Account?.uuid) { try { await apiService.disconnectMT5(mt5Account.uuid); } catch {} }
+      setMT5Account({ login: login.trim(), password: password.trim(), server: server.trim(), connected: false });
+    } catch {}
+  };
+
   const handleLinkAccount = async () => {
+    // MT5 uses Api2Trade (single button toggles connect/disconnect); MT4 keeps the web terminal.
+    if (activeTab === 'MT5') {
+      if (mt5Account?.uuid && mt5Account.connected) {
+        await handleApi2TradeDisconnect();
+        return;
+      }
+      if (!login.trim() || !password.trim() || !server.trim()) {
+        Alert.alert('Missing Information', 'Please fill in all fields to continue.');
+        return;
+      }
+      await handleApi2TradeConnect();
+      return;
+    }
     if (!login.trim() || !password.trim() || !server.trim()) {
       Alert.alert('Missing Information', 'Please fill in all fields to continue.');
       return;
     }
-
-    // Show web view based on active tab
-    if (activeTab === 'MT5') {
-      handleMT5WebView();
-    } else {
-      handleMT4WebView();
-    }
+    handleMT4WebView();
   };
 
 

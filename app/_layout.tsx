@@ -220,8 +220,8 @@ function RootLayoutNav() {
         onSignalDismiss={dismissNewSignal}
       />
 
-      {/* Save to Home Screen prompt — shows on web before start */}
-      <AddToHomePrompt />
+      {/* Save to Home Screen prompt — disabled per request (no auto popup) */}
+      {/* <AddToHomePrompt /> */}
 
       {/* Trading WebView Modal */}
       <TradingWebView

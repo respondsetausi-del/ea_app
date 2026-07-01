@@ -1380,6 +1380,50 @@ async function handleApi(request: Request): Promise<Response> {
       return new Response('Method Not Allowed', { status: 405 });
     }
 
+    // ── Api2Trade MT5 routes ──
+    if (pathname === '/api/mt5/connect') {
+      const route = await import('./app/api/mt5/connect/route.ts');
+      if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
+      if (request.method === 'DELETE' && typeof route.DELETE === 'function') return route.DELETE(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    if (pathname === '/api/mt5/account') {
+      const route = await import('./app/api/mt5/account/route.ts');
+      if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    if (pathname === '/api/mt5/symbols') {
+      const route = await import('./app/api/mt5/symbols/route.ts');
+      if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    if (pathname === '/api/mt5/trade') {
+      const route = await import('./app/api/mt5/trade/route.ts');
+      if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    if (pathname === '/api/mt5/batch/start') {
+      const route = await import('./app/api/mt5/batch/start/route.ts');
+      if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    if (pathname === '/api/mt5/batch/stop') {
+      const route = await import('./app/api/mt5/batch/stop/route.ts');
+      if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    if (pathname === '/api/mt5/batch/status') {
+      const route = await import('./app/api/mt5/batch/status/route.ts');
+      if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
     // Add terminal-proxy routing
     if (pathname === '/api/terminal-proxy') {
       const route = await import('./app/api/terminal-proxy.ts');
@@ -1613,5 +1657,12 @@ const server = Bun.serve({
 });
 
 console.log(`Server running on http://localhost:${server.port}`);
+
+// Resume any active MT5 batches from the DB so a restart/redeploy/sleep doesn't
+// kill running loops — they pick up where they left off.
+import('./app/api/mt5/batch/engine.ts')
+  .then((m) => m.resumeBatches?.())
+  .then(() => console.log('[Batch:srv] resume-on-boot complete'))
+  .catch((e) => console.error('[Batch:srv] resume-on-boot failed:', e?.message || e));
 
 

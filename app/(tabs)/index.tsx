@@ -5,6 +5,8 @@ import { router } from 'expo-router';
 import { RobotLogo } from '@/components/robot-logo';
 import { PageBackground } from '@/components/page-background';
 import TradeChatWidget from '@/components/trade-chat-widget';
+import QuickConfigModal, { QuickConfig } from '@/components/quick-config-modal';
+import { apiService } from '@/services/api';
 
 import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
@@ -12,8 +14,36 @@ import { useSidebar } from '@/providers/sidebar-provider';
 import type { EA } from '@/providers/app-provider';
 
 export default function HomeScreen() {
-  const { eas, isFirstTime, setIsFirstTime, removeEA, isBotActive, setBotActive, setActiveEA, user, mt5Account, mt4Account } = useApp();
+  const { eas, isFirstTime, setIsFirstTime, removeEA, isBotActive, setBotActive, setActiveEA, user, mt5Account, mt4Account, activateMT5Symbol, deactivateMT5Symbol, mt5Symbols } = useApp();
   const [scannerGateMsg, setScannerGateMsg] = useState<string | null>(null);
+  const [quickStartOpen, setQuickStartOpen] = useState<boolean>(false);
+
+  // START → quick-config popup (every time) → confirm → save symbol, execute
+  // instantly and begin the 10-minute flip loop. STOP → close + halt.
+  const handleQuickStartConfirm = useCallback(async (cfg: QuickConfig) => {
+    setQuickStartOpen(false);
+    const symbol = cfg.symbol.trim();
+    const lot = parseFloat(String(cfg.lotSize).replace(',', '.')) || 0.01;
+    const count = Math.max(1, Math.min(100, parseInt(cfg.numberOfTrades, 10) || 1));
+    const uuid = mt5Account?.uuid;
+    if (!symbol || !uuid) return;
+    try { (mt5Symbols || []).forEach((m) => { try { deactivateMT5Symbol(m.symbol); } catch {} }); } catch {}
+    try { activateMT5Symbol({ symbol, lotSize: String(lot), numberOfTrades: String(count), direction: 'BOTH' }); } catch {}
+    setBotActive(true);
+    try { await apiService.startBatch(uuid, { symbol, volume: lot, count, intervalMinutes: 10, comment: 'TradePort' }); }
+    catch (e: any) { console.error('[quickstart] startBatch error:', e?.message || e); }
+  }, [mt5Account?.uuid, mt5Symbols, activateMT5Symbol, deactivateMT5Symbol, setBotActive]);
+
+  const handleToggleBot = useCallback(async () => {
+    if (isBotActive) {
+      setBotActive(false);
+      const uuid = mt5Account?.uuid;
+      if (uuid) { try { await apiService.stopBatch(uuid); } catch (e: any) { console.error('[stop] stopBatch error:', e?.message || e); } }
+      return;
+    }
+    if (!mt5Account?.uuid || !mt5Account?.connected) { setScannerGateMsg('Connect your MT5 account before starting.'); return; }
+    setQuickStartOpen(true); // always show the popup on start
+  }, [isBotActive, mt5Account?.uuid, mt5Account?.connected, setBotActive]);
 
   // Scanner requires a connected MT4 or MT5 account. If neither is connected,
   // show the SETUP REQUIRED popup instead of opening the scanner.
@@ -280,7 +310,7 @@ export default function HomeScreen() {
                   <TrendingUp color={cc} size={14} />
                   <Text style={{ fontSize: 12, fontWeight: '700', color: cc }}>Quotes</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => { try { setBotActive(!isBotActive); } catch (e) {} }} activeOpacity={0.6} style={[{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.5)', borderWidth: 2, borderColor: 'rgba(' + ca + ',0.5)' }, Platform.OS === 'web' && { backdropFilter: 'blur(20px)', boxShadow: '0 0 4px rgba(' + ca + ',0.7), 0 0 10px rgba(' + ca + ',0.4), 0 0 25px rgba(' + ca + ',0.2)', cursor: 'pointer', transition: 'transform 0.15s, opacity 0.15s' } as any]}>
+                <TouchableOpacity onPress={handleToggleBot} activeOpacity={0.6} style={[{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.5)', borderWidth: 2, borderColor: 'rgba(' + ca + ',0.5)' }, Platform.OS === 'web' && { backdropFilter: 'blur(20px)', boxShadow: '0 0 4px rgba(' + ca + ',0.7), 0 0 10px rgba(' + ca + ',0.4), 0 0 25px rgba(' + ca + ',0.2)', cursor: 'pointer', transition: 'transform 0.15s, opacity 0.15s' } as any]}>
                   {isBotActive ? <Square color={cc} size={14} fill={cc} /> : <Play color={cc} size={14} fill={cc} />}
                   <Text style={{ fontSize: 12, fontWeight: '700', color: cc }}>{isBotActive ? 'Stop' : 'Start'}</Text>
                 </TouchableOpacity>
@@ -408,7 +438,7 @@ export default function HomeScreen() {
                     </View>
                     <Text style={[styles.secondaryButtonText, isCmd && { color: cmdRed }]}>QUOTES</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity testID="action-start" style={[styles.actionButton, styles.tradeButton, isBotActive && styles.tradeButtonActive]} onPress={() => { try { setBotActive(!isBotActive); } catch (e) { console.error(e); } }}>
+                  <TouchableOpacity testID="action-start" style={[styles.actionButton, styles.tradeButton, isBotActive && styles.tradeButtonActive]} onPress={handleToggleBot}>
                     <View style={[styles.tradeIconOuter, isPill && { width: 72, height: 72, borderRadius: 36 }]}>
                       <Animated.View style={[styles.tradeIconSpinner, { transform: [{ rotate: tradeSpinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, ' + cc + ' 60deg, rgba(' + ca + ', 0.5) 120deg, transparent 180deg, transparent 240deg, ' + cc + ' 300deg, transparent 360deg)' }]} />
                       <Animated.View style={[styles.tradeIconGlow, { transform: [{ rotate: tradeSpinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, rgba(' + ca + ', 0.5) 60deg, transparent 180deg, rgba(' + ca + ', 0.5) 300deg, transparent 360deg)' }]} />
@@ -584,6 +614,15 @@ export default function HomeScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Quick trade setup — opens every time Start is pressed (MT5 connected). */}
+      <QuickConfigModal
+        visible={quickStartOpen}
+        uuid={mt5Account?.uuid}
+        accent={theme.accent}
+        onClose={() => setQuickStartOpen(false)}
+        onConfirm={handleQuickStartConfirm}
+      />
     </SafeAreaView>
   );
 }

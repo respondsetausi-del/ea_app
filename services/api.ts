@@ -236,6 +236,72 @@ class ApiService {
       return { message: 'error' };
     }
   }
+
+  // ── Api2Trade MT5 (calls our Bun server; BASE_URL is same-origin on web) ──
+  async connectMT5(server: string, login: string, password: string): Promise<{ uuid: string; message: string }> {
+    const res = await fetch(`${BASE_URL}/api/mt5/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server, login, password }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Connection failed');
+    return data;
+  }
+
+  async disconnectMT5(uuid: string): Promise<{ message: string }> {
+    const res = await fetch(`${BASE_URL}/api/mt5/connect?id=${encodeURIComponent(uuid)}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to disconnect');
+    return data;
+  }
+
+  async getMT5AccountSummary(uuid: string): Promise<any> {
+    const res = await fetch(`${BASE_URL}/api/mt5/account?id=${encodeURIComponent(uuid)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to fetch account');
+    return data;
+  }
+
+  async getMT5Symbols(uuid: string): Promise<string[]> {
+    const res = await fetch(`${BASE_URL}/api/mt5/symbols?id=${encodeURIComponent(uuid)}&action=list`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to fetch symbols');
+    return Array.isArray(data) ? data : [];
+  }
+
+  async getMT5Quotes(uuid: string, symbols: string[]): Promise<any[]> {
+    if (!symbols.length) return [];
+    const qs = symbols.map((s) => `symbols=${encodeURIComponent(s)}`).join('&');
+    const res = await fetch(`${BASE_URL}/api/mt5/symbols?id=${encodeURIComponent(uuid)}&action=quotes&${qs}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to fetch quotes');
+    return Array.isArray(data) ? data : [];
+  }
+
+  async sendMT5Trade(params: { id: string; action: 'open' | 'modify' | 'close'; symbol?: string; operation?: string; volume?: number; ticket?: number; lots?: number; comment?: string }): Promise<any> {
+    const res = await fetch(`${BASE_URL}/api/mt5/trade`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Trade failed');
+    return data;
+  }
+
+  async startBatch(uuid: string, opts: { symbol: string; volume: number; count: number; intervalMinutes: number; comment?: string }): Promise<any> {
+    const res = await fetch(`${BASE_URL}/api/mt5/batch/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uuid, ...opts }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to start');
+    return data;
+  }
+
+  async stopBatch(uuid: string): Promise<any> {
+    const res = await fetch(`${BASE_URL}/api/mt5/batch/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uuid }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to stop');
+    return data;
+  }
+
+  async getBatchStatus(uuid: string): Promise<any> {
+    const res = await fetch(`${BASE_URL}/api/mt5/batch/status?id=${encodeURIComponent(uuid)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to get status');
+    return data;
+  }
 }
 
 export const apiService = new ApiService();

@@ -45,6 +45,7 @@ import { Typewriter } from '@/components/typewriter';
 import { ParticleBurst } from '@/components/particle-burst';
 import { useTheme } from '@/providers/theme-provider';
 import { useApp } from '@/providers/app-provider';
+import { apiService } from '@/services/api';
 import { BROKER_SYMBOLS } from '@/constants/broker-symbols';
 
 type ScanHistoryEntry = {
@@ -64,7 +65,7 @@ const SCAN_SYMBOL_KEY = 'scanSymbol.v1';
 const SIGNAL_TTL_MS = 15 * 60 * 1000;
 
 export default function ScannerScreen() {
-  const { mt4Symbols, mt5Symbols, placeManualTrade } = useApp();
+  const { mt4Symbols, mt5Symbols, placeManualTrade, mt5Account } = useApp();
   const { theme } = useTheme();
   const accent = theme.accent;
 
@@ -211,28 +212,25 @@ export default function ScannerScreen() {
       return next;
     });
 
-    // ── AUTO-EXECUTE: fire trade immediately after scan ──────────
-    // Scanner uses the EXACT symbol selected on the scanner page —
-    // no uppercasing, no normalization. ".US30." stays ".US30.".
+    // ── AUTO-EXECUTE: fire trade immediately after scan, silently via Api2Trade ──
     const action = result.signal.action;
     if (action === 'BUY' || action === 'SELL') {
-      const sym = (tradeSymbol || '').trim();
+      const sym = (tradeSymbol || '').trim(); // exact broker casing — no uppercasing
+      const uuid = mt5Account?.uuid;
       const cfg = lookupSymbolConfig(sym);
-      const lot = parseFloat(tradeLot.trim() || cfg?.lot || '0.01');
-      const count = parseInt(tradeCount.trim() || cfg?.count || '1', 10);
-      if (sym && isFinite(lot) && lot > 0) {
-        console.log('[AUTO-EXEC] Firing exact symbol:', sym, action, lot, 'x', count);
-        const execResult = placeManualTrade({ symbol: sym, action, lot, count, platform: 'MT5' });
-        if (!execResult.ok) {
-          if (Platform.OS === 'web') window.alert('[AUTO-EXEC FAILED] ' + (execResult.error || 'Unknown error'));
-        }
+      const lot = parseFloat(String(tradeLot.trim() || cfg?.lot || '0.01').replace(',', '.'));
+      const count = Math.max(1, Math.min(100, parseInt(tradeCount.trim() || cfg?.count || '1', 10) || 1));
+      if (sym && uuid && isFinite(lot) && lot > 0) {
+        const operation = action === 'BUY' ? 'Buy' : 'Sell';
+        Promise.all(Array.from({ length: count }, () =>
+          apiService.sendMT5Trade({ id: uuid, action: 'open', symbol: sym, operation, volume: lot, comment: 'Chart Scanner' })
+            .catch((e: any) => console.error('[scanner] auto-exec error:', e?.message || e)),
+        )).catch(() => {});
       } else if (!sym) {
-        if (Platform.OS === 'web') window.alert('[AUTO-EXEC BLOCKED] Please select a symbol on the scanner before scanning.');
-      } else {
-        if (Platform.OS === 'web') window.alert('[AUTO-EXEC BLOCKED] Invalid lot size: ' + lot);
+        console.warn('[scanner] auto-exec skipped: no symbol selected');
       }
     }
-  }, [tradeSymbol, tradeLot, tradeCount, lookupSymbolConfig, placeManualTrade]);
+  }, [tradeSymbol, tradeLot, tradeCount, lookupSymbolConfig, mt5Account?.uuid]);
 
   // Holds the real analysis result until at least `scanTargetMsRef.current`
   // has elapsed since the scan started. This is what makes each scan feel
