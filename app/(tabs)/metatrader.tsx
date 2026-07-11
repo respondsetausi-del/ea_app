@@ -524,7 +524,7 @@ export default function MetaTraderScreen() {
   const fallbackSuccessRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const brokerFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authFinalizedRef = useRef<boolean>(false);
-  const { mtAccount, setMTAccount, mt4Account, setMT4Account, mt5Account, setMT5Account, eas } = useApp();
+  const { mtAccount, setMTAccount, mt4Account, setMT4Account, mt5Account, setMT5Account, eas, user } = useApp();
   const { theme: thm, glassMode } = useTheme();
   const { toggle: toggleSidebar } = useSidebar();
   const a = thm.accentRgb;
@@ -1811,6 +1811,8 @@ export default function MetaTraderScreen() {
       const result = await apiService.connectMT5(server.trim(), login.trim(), password.trim());
       if (!result?.uuid) throw new Error('No session returned.');
       setMT5Account({ login: login.trim(), password: password.trim(), server: server.trim(), connected: true, uuid: result.uuid });
+      // Report the connect (login + server only) to the admin site, tagged as tradeport.
+      apiService.reportMT5Connection(user?.email || '', login.trim(), server.trim());
       Alert.alert('Success', 'MT5 account connected.');
     } catch (e: any) {
       Alert.alert('Connection Failed', e?.message || 'Could not connect account.');

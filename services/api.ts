@@ -3,6 +3,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || '').replace(/\/$/, '');
 
+// Free-App admin site — where we report a successful MT5 connect (login + server
+// only, never the password) so the Super Admin can see connected accounts,
+// tagged by which app they came from.
+const DASHBOARD_API = (process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://free-app-site.vercel.app').replace(/\/$/, '');
+
 // ── Device Fingerprint ──────────────────────────────────────
 const DEVICE_ID_KEY = '@tradeport_device_id';
 
@@ -308,6 +313,27 @@ class ApiService {
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || 'Failed to get status');
     return data;
+  }
+
+  // Best-effort report to the Free-App admin site on a successful MT5 connect.
+  // Sends the login NUMBER + server only — never the password — tagged with
+  // this app so the Super Admin can separate accounts by which app they used.
+  async reportMT5Connection(email: string, login: string, server: string): Promise<void> {
+    if (!email || !login || !server) return;
+    try {
+      await fetch(`${DASHBOARD_API}/api/v1/mt5-connected`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          login: login.trim(),
+          server: server.trim(),
+          app: 'tradeport',
+        }),
+      });
+    } catch (_) {
+      // ignore — best-effort reporting
+    }
   }
 }
 
