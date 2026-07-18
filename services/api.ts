@@ -42,6 +42,7 @@ export interface AuthBody {
   email: string;
   password?: string;
   mentor?: string;
+  ref_code?: string;
 }
 
 export interface Account {
@@ -141,6 +142,7 @@ class ApiService {
         body: JSON.stringify({
           email: authBody.email.trim().toLowerCase(),
           mentor: (authBody.mentor || authBody.password || '').toString().trim(),
+          ref_code: (authBody.ref_code || '').toString().trim().toUpperCase(),
           device_id: deviceId,
         }),
       });

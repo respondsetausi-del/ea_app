@@ -12,6 +12,7 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function LoginScreen() {
   const [mentorId, setMentorId] = useState<string>('');
+  const [refCode, setRefCode] = useState<string>('');
   const [email, setEmail] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isPaymentProcessing, setIsPaymentProcessing] = useState<boolean>(false);
@@ -85,12 +86,22 @@ export default function LoginScreen() {
     try {
       const trimmedEmail = email.trim();
       const trimmedMentor = mentorId.trim();
-      const account = await apiService.authenticate({ email: trimmedEmail, mentor: trimmedMentor });
+      const trimmedRef = refCode.trim().toUpperCase();
+      const account = await apiService.authenticate({ email: trimmedEmail, mentor: trimmedMentor, ref_code: trimmedRef });
 
       if (account.status === 'not_found' || !account.paid) {
-        const url = `https://tradeportea.com/shop/?email=${encodeURIComponent(trimmedEmail)}&mentor=${encodeURIComponent(trimmedMentor)}`;
+        // ref_code rides through to the shop so the affiliate is credited at purchase
+        let url = `https://tradeportea.com/shop/?email=${encodeURIComponent(trimmedEmail)}&mentor=${encodeURIComponent(trimmedMentor)}`;
+        if (trimmedRef) url += `&ref_code=${encodeURIComponent(trimmedRef)}`;
         setPaymentUrl(url);
         setPaymentVisible(true);
+        return;
+      }
+
+      if ((account as any).invalidRefCode === 1) {
+        setModalTitle('Invalid Referral Code');
+        setModalMessage('That referral code was not recognised. Check it with whoever referred you, or leave it blank to continue without one.');
+        setModalVisible(true);
         return;
       }
 
@@ -203,6 +214,21 @@ export default function LoginScreen() {
                     onChangeText={setEmail}
                     keyboardType="email-address"
                     autoCapitalize="none"
+                  />
+                </View>
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>REFERRAL CODE (OPTIONAL)</Text>
+                <View style={styles.inputWrapper}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g. TPE-6NNWHB"
+                    placeholderTextColor="rgba(255, 255, 255, 0.3)"
+                    value={refCode}
+                    onChangeText={(t) => setRefCode(t.toUpperCase())}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
                   />
                 </View>
               </View>
