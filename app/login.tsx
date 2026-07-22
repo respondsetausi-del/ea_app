@@ -118,7 +118,7 @@ export default function LoginScreen() {
           ? new Date((account as any).expiry_date).toLocaleDateString()
           : 'recently';
         setModalTitle('Subscription Expired');
-        setModalMessage(`Your subscription expired on ${expiryStr}. Please renew to continue using Trade Port EA.`);
+        setModalMessage(`Your subscription expired on ${expiryStr}. Please renew to continue using EA NAPTUNE.`);
         setModalVisible(true);
         return;
       }
@@ -181,7 +181,7 @@ export default function LoginScreen() {
                   resizeMode="contain"
                 />
               </View>
-              <Text style={styles.appName}>Trade Port</Text>
+              <Text style={styles.appName}>EA NAPTUNE</Text>
               <Text style={styles.tagline}>Algorithmic Trading Platform</Text>
             </Animated.View>
 
@@ -255,7 +255,7 @@ export default function LoginScreen() {
               </TouchableOpacity>
             </View>
 
-            <Text style={styles.footer}>Powered by Trade Port EA</Text>
+            <Text style={styles.footer}>Powered by EA NAPTUNE</Text>
           </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
