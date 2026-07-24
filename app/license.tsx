@@ -69,8 +69,8 @@ export default function LicenseScreen() {
       const keyHash = licenseKey.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
       const uniqueId = `ea_${timestamp}_${randomPart}_${keyHash}`;
       const newEA = {
-        id: uniqueId, name: data.ea_name || 'TRADE PORT EA', licenseKey: licenseKey.trim(),
-        status: 'connected' as const, description: (data.owner?.name) || 'TRADE PORT EA',
+        id: uniqueId, name: data.ea_name || 'EA NAPTUNE', licenseKey: licenseKey.trim(),
+        status: 'connected' as const, description: (data.owner?.name) || 'EA NAPTUNE',
         phoneSecretKey: data.phone_secret_key, userData: data,
       };
       const success = await addEA(newEA);

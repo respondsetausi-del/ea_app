@@ -243,7 +243,7 @@ export default function SettingsScreen() {
             <Text style={[styles.infoIcon, { color: theme.accent }]}>i</Text>
           </View>
           <View style={styles.cardTextContainer}>
-            <Text style={styles.cardTitle}>About Trade Port EA</Text>
+            <Text style={styles.cardTitle}>About EA NAPTUNE</Text>
             <Text style={styles.cardSubtitle}>Version, license & support info</Text>
           </View>
         </TouchableOpacity>

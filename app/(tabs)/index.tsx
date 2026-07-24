@@ -312,7 +312,7 @@ export default function HomeScreen() {
             {/* Powered By */}
             <View style={{ alignItems: 'center', marginBottom: 20 }}>
               <View style={[{ paddingVertical: 5, paddingHorizontal: 16, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', backgroundColor: 'rgba(0,0,0,0.4)' }, Platform.OS === 'web' && { backdropFilter: 'blur(10px)' } as any]}>
-                <Text style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)' }}>Powered By <Text style={{ fontWeight: '700', color: cc }}>Trade Port EA</Text></Text>
+                <Text style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)' }}>Powered By <Text style={{ fontWeight: '700', color: cc }}>EA NAPTUNE</Text></Text>
               </View>
             </View>
 
@@ -476,7 +476,7 @@ export default function HomeScreen() {
           {/* ========== POWERED BY ========== */}
           {primaryEA && (
             <View style={styles.poweredByWrap}>
-              <Text style={styles.poweredByText}>Powered by <Text style={[styles.poweredByAccent, { color: isCmd ? cmdRed : ac }]}>Trade Port EA</Text></Text>
+              <Text style={styles.poweredByText}>Powered by <Text style={[styles.poweredByAccent, { color: isCmd ? cmdRed : ac }]}>EA NAPTUNE</Text></Text>
             </View>
           )}
 

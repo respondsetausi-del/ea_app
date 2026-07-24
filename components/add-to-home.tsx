@@ -83,7 +83,7 @@ export function AddToHomePrompt() {
       <Animated.View style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}>
         <View style={styles.notch} />
 
-        <Text style={styles.title}>Install Trade Port</Text>
+        <Text style={styles.title}>Install EA NAPTUNE</Text>
         <Text style={styles.subtitle}>
           Save to your home screen for full-screen access, instant launch, and no browser bar.
         </Text>

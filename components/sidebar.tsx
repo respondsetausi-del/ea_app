@@ -91,7 +91,7 @@ export function Sidebar() {
 
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>TRADE PORT</Text>
+          <Text style={styles.headerTitle}>EA NAPTUNE</Text>
           <TouchableOpacity onPress={close} style={styles.closeBtn}>
             <X color="rgba(255,255,255,0.6)" size={20} />
           </TouchableOpacity>

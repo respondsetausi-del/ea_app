@@ -1,17 +1,21 @@
 import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
-import { RobotLogo } from './robot-logo';
+import { CandleLogo } from './candle-logo';
+
+const ACCENT = '#0A84FF';
 
 interface CustomLoadingScreenProps {
     message?: string;
 }
 
-export function CustomLoadingScreen({ message = "Loading Trade Port EA..." }: CustomLoadingScreenProps) {
+export function CustomLoadingScreen({ message = "Loading EA NAPTUNE..." }: CustomLoadingScreenProps) {
     return (
         <View style={styles.container}>
             <View style={styles.content}>
-                <RobotLogo size={120} />
-                <Text style={styles.title}>TRADE PORT EA</Text>
+                <View style={styles.logoTile}>
+                    <CandleLogo size={84} color={ACCENT} />
+                </View>
+                <Text style={styles.title}>EA NAPTUNE</Text>
                 <Text style={styles.message}>{message}</Text>
 
                 {/* Loading dots animation */}
@@ -36,25 +40,36 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     ...(Platform.OS === 'web' && {
-      backgroundImage: 'linear-gradient(135deg, rgba(255, 26, 26, 0.9) 0%, rgba(255, 26, 26, 0.5) 30%, rgba(255, 26, 26, 0.1) 65%, rgba(0, 0, 0, 0.95) 90%, rgba(0, 0, 0, 1) 100%)',
+      backgroundImage: 'linear-gradient(135deg, rgba(10, 132, 255, 0.9) 0%, rgba(10, 132, 255, 0.5) 30%, rgba(10, 132, 255, 0.1) 65%, rgba(0, 0, 0, 0.95) 90%, rgba(0, 0, 0, 1) 100%)',
     }),
   },
     content: {
         alignItems: 'center',
         paddingHorizontal: 24,
     },
+    logoTile: {
+        width: 120,
+        height: 120,
+        borderRadius: 24,
+        backgroundColor: '#050505',
+        alignItems: 'center',
+        justifyContent: 'center',
+        ...(Platform.OS === 'web' && {
+          boxShadow: '0 0 26px rgba(10, 132, 255, 0.55)',
+        }),
+    },
     title: {
         fontSize: 28,
         fontWeight: '800',
-        color: '#FF1A1A',
+        color: ACCENT,
         marginTop: 24,
         letterSpacing: 3,
-        textShadowColor: '#FF1A1A',
+        textShadowColor: ACCENT,
         textShadowOffset: { width: 0, height: 0 },
         textShadowRadius: 15,
         textAlign: 'center',
         ...(Platform.OS === 'web' && {
-          filter: 'drop-shadow(0 0 10px rgba(255, 26, 26, 0.6))',
+          filter: 'drop-shadow(0 0 10px rgba(10, 132, 255, 0.6))',
         }),
     },
     message: {
@@ -73,16 +88,15 @@ const styles = StyleSheet.create({
         width: 10,
         height: 10,
         borderRadius: 5,
-        backgroundColor: '#FF1A1A',
+        backgroundColor: ACCENT,
         marginHorizontal: 6,
-        shadowColor: '#FF1A1A',
+        shadowColor: ACCENT,
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.8,
         shadowRadius: 8,
     },
     dot1: {
         opacity: 0.4,
-        // Animation would be handled by CSS on web or Animated API on native
     },
     dot2: {
         opacity: 0.7,
