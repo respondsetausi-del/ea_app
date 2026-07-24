@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image, ImageBackg
 import { Play, Square, TrendingUp, Trash2, Plus, Menu, BarChart3, Shield } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { RobotLogo } from '@/components/robot-logo';
+import { CandleLogo } from '@/components/candle-logo';
 import { PageBackground } from '@/components/page-background';
 import TradeChatWidget from '@/components/trade-chat-widget';
 import QuickConfigModal, { QuickConfig } from '@/components/quick-config-modal';
@@ -258,13 +259,16 @@ export default function HomeScreen() {
       <View style={[styles.splashContainer, Platform.OS === 'web' && { backgroundImage: 'linear-gradient(135deg, rgba(' + a + ', 0.95) 0%, rgba(' + a + ', 0.7) 20%, rgba(' + a + ', 0.4) 40%, rgba(' + a + ', 0.2) 60%, rgba(' + a + ', 0.1) 80%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 1) 100%)' }]}>
         <View style={styles.splashContent}>
           <View style={styles.logoContainer}>
-            <Image
+            <View
               testID="splash-app-icon"
-              source={require('../../assets/images/icon.png')}
-              style={{ width: 120, height: 120, borderRadius: 24 }}
-              resizeMode="contain"
-            />
-            <Text style={[styles.title, { color: ac }]}>TRADE PORT EA</Text>
+              style={[
+                { width: 120, height: 120, borderRadius: 24, backgroundColor: '#050505', alignItems: 'center', justifyContent: 'center' },
+                Platform.OS === 'web' && { boxShadow: '0 0 26px rgba(' + a + ', 0.55)' },
+              ]}
+            >
+              <CandleLogo size={84} color={ac} />
+            </View>
+            <Text style={[styles.title, { color: ac }]}>EA NAPTUNE</Text>
           </View>
           <Text style={styles.description}>
             A cutting-edge mobile hosting platform designed to empower traders with a secure, reliable, and user-friendly environment for running their automated trading systems. Seamlessly manage your Expert Advisors (EAs) on the go, ensuring optimal performance and peace of mind.

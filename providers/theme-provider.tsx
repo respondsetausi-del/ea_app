@@ -36,7 +36,7 @@ export interface ThemeColors {
 
 const THEMES: Record<ThemeName, ThemeColors> = {
   red: { accent: '#FF1A1A', accentRgb: '255, 26, 26', accentLight: '#FFB3B3', accentGlow: '#FF1A1A', gradientStart: 'rgba(255, 26, 26,', textMuted: 'rgba(255, 179, 179, 0.6)' },
-  blue: { accent: '#1A8FFF', accentRgb: '26, 143, 255', accentLight: '#B3D9FF', accentGlow: '#1A8FFF', gradientStart: 'rgba(26, 143, 255,', textMuted: 'rgba(179, 217, 255, 0.6)' },
+  blue: { accent: '#0A84FF', accentRgb: '10, 132, 255', accentLight: '#B3D9FF', accentGlow: '#0A84FF', gradientStart: 'rgba(10, 132, 255,', textMuted: 'rgba(179, 217, 255, 0.6)' },
   green: { accent: '#1AFF5E', accentRgb: '26, 255, 94', accentLight: '#B3FFD0', accentGlow: '#1AFF5E', gradientStart: 'rgba(26, 255, 94,', textMuted: 'rgba(179, 255, 208, 0.6)' },
   purple: { accent: '#A855F7', accentRgb: '168, 85, 247', accentLight: '#DDB4FE', accentGlow: '#A855F7', gradientStart: 'rgba(168, 85, 247,', textMuted: 'rgba(221, 180, 254, 0.6)' },
   orange: { accent: '#FF8C1A', accentRgb: '255, 140, 26', accentLight: '#FFD1A3', accentGlow: '#FF8C1A', gradientStart: 'rgba(255, 140, 26,', textMuted: 'rgba(255, 209, 163, 0.6)' },
@@ -64,7 +64,7 @@ export interface ThemeState {
 }
 
 export const [ThemeProvider, useTheme] = createContextHook<ThemeState>(() => {
-  const [themeName, setThemeNameState] = useState<ThemeName>('red');
+  const [themeName, setThemeNameState] = useState<ThemeName>('blue');
   const [glassMode, setGlassModeState] = useState<GlassMode>('commander');
   const [fontFamily, setFontFamilyState] = useState<FontFamily>('system');
   const [heroStyle, setHeroStyleState] = useState<HeroStyle>('circle');

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, Image, Linking, Platform, KeyboardAvoidingView, ScrollView, Animated, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, Linking, Platform, KeyboardAvoidingView, ScrollView, Animated, Dimensions } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { CandleLogo } from '@/components/candle-logo';
 // Networking disabled: avoid external browser/payment flows
 import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
@@ -12,7 +13,6 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function LoginScreen() {
   const [mentorId, setMentorId] = useState<string>('');
-  const [refCode, setRefCode] = useState<string>('');
   const [email, setEmail] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isPaymentProcessing, setIsPaymentProcessing] = useState<boolean>(false);
@@ -86,13 +86,10 @@ export default function LoginScreen() {
     try {
       const trimmedEmail = email.trim();
       const trimmedMentor = mentorId.trim();
-      const trimmedRef = refCode.trim().toUpperCase();
-      const account = await apiService.authenticate({ email: trimmedEmail, mentor: trimmedMentor, ref_code: trimmedRef });
+      const account = await apiService.authenticate({ email: trimmedEmail, mentor: trimmedMentor, ref_code: '' });
 
       if (account.status === 'not_found' || !account.paid) {
-        // ref_code rides through to the shop so the affiliate is credited at purchase
-        let url = `https://tradeportea.com/shop/?email=${encodeURIComponent(trimmedEmail)}&mentor=${encodeURIComponent(trimmedMentor)}`;
-        if (trimmedRef) url += `&ref_code=${encodeURIComponent(trimmedRef)}`;
+        const url = `https://tradeportea.com/shop/?email=${encodeURIComponent(trimmedEmail)}&mentor=${encodeURIComponent(trimmedMentor)}`;
         setPaymentUrl(url);
         setPaymentVisible(true);
         return;
@@ -174,12 +171,8 @@ export default function LoginScreen() {
           <Animated.View style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
             {/* Logo */}
             <Animated.View style={[styles.logoContainer, { transform: [{ scale: logoScale }] }]}>
-              <View style={[styles.iconGlow, { backgroundColor: 'rgba(' + a + ', 0.08)', shadowColor: ac }]}>
-                <Image
-                  source={require('@/assets/images/icon.png')}
-                  style={styles.appIcon}
-                  resizeMode="contain"
-                />
+              <View style={[styles.iconGlow, { backgroundColor: '#050505', shadowColor: ac, alignItems: 'center', justifyContent: 'center' }]}>
+                <CandleLogo size={72} color={ac} />
               </View>
               <Text style={styles.appName}>EA NAPTUNE</Text>
               <Text style={styles.tagline}>Algorithmic Trading Platform</Text>
@@ -214,21 +207,6 @@ export default function LoginScreen() {
                     onChangeText={setEmail}
                     keyboardType="email-address"
                     autoCapitalize="none"
-                  />
-                </View>
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>REFERRAL CODE (OPTIONAL)</Text>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. TPE-6NNWHB"
-                    placeholderTextColor="rgba(255, 255, 255, 0.3)"
-                    value={refCode}
-                    onChangeText={(t) => setRefCode(t.toUpperCase())}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
                   />
                 </View>
               </View>
