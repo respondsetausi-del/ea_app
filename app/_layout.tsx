@@ -163,6 +163,31 @@ function RootLayoutNav() {
       document.head.appendChild(link);
     }
 
+    // 1b. PWA home-screen icons (candle) + manifest — web only
+    const pwaId = 'ea-naptune-pwa-icons';
+    if (!document.getElementById(pwaId)) {
+      const marker = document.createElement('meta');
+      marker.id = pwaId;
+      document.head.appendChild(marker);
+      const addLink = (rel: string, href: string, extra?: Record<string, string>) => {
+        const l = document.createElement('link');
+        l.rel = rel; l.href = href;
+        if (extra) Object.entries(extra).forEach(([k, v]) => l.setAttribute(k, v));
+        document.head.appendChild(l);
+      };
+      addLink('apple-touch-icon', '/apple-touch-icon.png');
+      addLink('manifest', '/manifest.json');
+      const addMeta = (name: string, content: string) => {
+        const m = document.createElement('meta');
+        m.name = name; m.content = content;
+        document.head.appendChild(m);
+      };
+      addMeta('apple-mobile-web-app-capable', 'yes');
+      addMeta('apple-mobile-web-app-status-bar-style', 'black-translucent');
+      addMeta('apple-mobile-web-app-title', 'EA NAPTUNE');
+      addMeta('theme-color', '#0A84FF');
+    }
+
     // 2. Inject/update <style> that overrides RN Web's inline font shorthand
     const styleId = 'tradeport-font-override';
     let styleEl = document.getElementById(styleId) as HTMLStyleElement | null;
