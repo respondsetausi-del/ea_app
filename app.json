@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Trade Port EA",
+    "name": "EA NAPTUNE",
     "slug": "tradeport-ea-app-bf6qtmx7-6jkhyg7w",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -67,14 +67,14 @@
     },
     "web": {
       "favicon": "./assets/images/favicon.png",
-      "name": "Trade Port EA",
-      "shortName": "Trade Port EA",
+      "name": "EA NAPTUNE",
+      "shortName": "EA NAPTUNE",
       "startUrl": "/",
       "display": "standalone",
       "orientation": "portrait",
       "themeColor": "#000000",
       "backgroundColor": "#000000",
-      "description": "Automated Forex Trading Trade Port EA App",
+      "description": "EA NAPTUNE - Automated Forex Trading App",
       "scope": "/",
       "lang": "en",
       "categories": [
