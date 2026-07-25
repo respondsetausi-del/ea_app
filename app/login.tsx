@@ -86,56 +86,25 @@ export default function LoginScreen() {
     try {
       const trimmedEmail = email.trim();
       const trimmedMentor = mentorId.trim();
-      const account = await apiService.authenticate({ email: trimmedEmail, mentor: trimmedMentor, ref_code: '' });
+      const account = await apiService.authenticate({ email: trimmedEmail, mentor: trimmedMentor });
 
-      if (account.status === 'not_found' || !account.paid) {
-        const url = `https://tradeportea.com/shop/?email=${encodeURIComponent(trimmedEmail)}&mentor=${encodeURIComponent(trimmedMentor)}`;
-        setPaymentUrl(url);
-        setPaymentVisible(true);
-        return;
-      }
-
-      if ((account as any).invalidRefCode === 1) {
-        setModalTitle('Invalid Referral Code');
-        setModalMessage('That referral code was not recognised. Check it with whoever referred you, or leave it blank to continue without one.');
-        setModalVisible(true);
-        return;
-      }
-
+      // Mentor ID isn't a known EA.
       if ((account as any).invalidMentor === 1) {
         setModalTitle('Invalid Mentor ID');
-        setModalMessage('The Mentor ID does not match our records for this email.');
+        setModalMessage('That Mentor ID was not found. Double-check it with your provider.');
         setModalVisible(true);
         return;
       }
 
-      // Subscription expired
-      if ((account as any).expired) {
-        const expiryStr = (account as any).expiry_date
-          ? new Date((account as any).expiry_date).toLocaleDateString()
-          : 'recently';
-        setModalTitle('Subscription Expired');
-        setModalMessage(`Your subscription expired on ${expiryStr}. Please renew to continue using EA NAPTUNE.`);
+      // EA exists but this email hasn't been invited to it yet.
+      if (account.status === 'not_found' || !account.paid) {
+        setModalTitle('Not Registered');
+        setModalMessage('Your email is not registered for this Mentor ID yet. Ask your provider to add your email, then try again.');
         setModalVisible(true);
         return;
       }
 
-      // Device mismatch — different phone trying to use same email
-      if ((account as any).device_mismatch) {
-        setModalTitle('Device Not Authorized');
-        setModalMessage('This subscription is already active on another device. Each subscription can only be used on one device. Contact support to transfer your license.');
-        setModalVisible(true);
-        return;
-      }
-
-      if (account.used) {
-        setModalTitle('Email Already Used');
-        setModalMessage('This email has already been used on a device. Please contact support if you need assistance.');
-        setModalVisible(true);
-        return;
-      }
-
-      // Mark authentication as successful — persists across app restarts
+      // Authenticated — persist and move to the license step.
       await AsyncStorage.setItem('emailAuthenticated', 'true');
       setUser({ mentorId: trimmedMentor, email: account.email });
       router.push('/license');

@@ -131,36 +131,41 @@ class ApiService {
   async authenticate(authBody: AuthBody): Promise<Account> {
     if (!authBody?.email) throw new Error('Email is required');
     const email = authBody.email.trim().toLowerCase();
+    const mentorId = (authBody.mentor || '').toString().trim();
 
-    // Validate the end-user against the EA NAPTUNE dashboard (Supabase). A user
-    // is allowed through once a distributor has invited their email (an active
-    // app_users record). The license key entered next is the real gate.
+    // The Mentor ID is an EA's id. Validate it — and whether this email is
+    // invited to that EA — against the EA NAPTUNE dashboard config endpoint.
     let res: Response;
     try {
-      res = await fetch(`${DASHBOARD_API}/api/v1/check-email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
+      res = await fetch(
+        `${DASHBOARD_API}/api/v1/config/${encodeURIComponent(mentorId)}?email=${encodeURIComponent(email)}`,
+        { method: 'GET', headers: { 'Accept': 'application/json' } }
+      );
     } catch (networkError) {
       throw new Error('Network error contacting the licensing server. Check your connection.');
     }
 
-    let data: { found?: boolean; active?: boolean; ea_count?: number } = {};
+    // 404 → the Mentor ID doesn't match any active EA.
+    if (res.status === 404) {
+      return {
+        id: email, email, status: 'ok', paid: false, used: false,
+        invalidMentor: 1, expired: false, expiry_date: null, device_mismatch: false,
+      };
+    }
+
+    let data: { user_authorized?: boolean } = {};
     try {
       data = await res.json();
     } catch {
       throw new Error('Authentication failed');
     }
 
-    const found = !!data.found;
-    const active = !!data.active;
-
+    const authorized = !!data.user_authorized;
     return {
       id: email,
       email,
-      status: found ? 'ok' : 'not_found',
-      paid: active, // an active EA association means they may proceed
+      status: authorized ? 'ok' : 'not_found',
+      paid: authorized, // invited to this EA → may proceed to the license step
       used: false,
       invalidMentor: 0,
       expired: false,
