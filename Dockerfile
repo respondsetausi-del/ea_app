@@ -17,6 +17,11 @@ RUN NODE_ENV=development bun install
 # Copy the rest of the source
 COPY . .
 
+# EXPO_PUBLIC_* vars are inlined during `expo export` (build time). Receive the
+# Stripe link as a build arg so a dashboard env var can override the code default.
+ARG EXPO_PUBLIC_STRIPE_BUY_URL
+ENV EXPO_PUBLIC_STRIPE_BUY_URL=$EXPO_PUBLIC_STRIPE_BUY_URL
+
 # Build static web export to dist/ using Node (avoids Bun sideEffects warning)
 RUN node ./node_modules/.bin/expo export --platform web
 

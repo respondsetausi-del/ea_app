@@ -11,9 +11,11 @@ import { apiService } from '@/services/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Stripe Payment Link (no-code). Set EXPO_PUBLIC_STRIPE_BUY_URL to your link,
-// and set that link's post-payment redirect to <app origin>/paid.
-const STRIPE_BUY_URL = process.env.EXPO_PUBLIC_STRIPE_BUY_URL || '';
+// Stripe Payment Link (no-code). Override with EXPO_PUBLIC_STRIPE_BUY_URL at
+// build time; falls back to the current link (a public URL, safe to embed).
+// The link's post-payment redirect must point to <app origin>/paid.
+const STRIPE_BUY_URL =
+  process.env.EXPO_PUBLIC_STRIPE_BUY_URL || 'https://buy.stripe.com/dRm14n16e13nf0G19Re3e0U';
 
 export default function LoginScreen() {
   const [mentorId, setMentorId] = useState<string>('');
