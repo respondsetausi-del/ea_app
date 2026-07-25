@@ -6,7 +6,7 @@ const BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || '').replace(/\/$/, '')
 // Free-App admin site — where we report a successful MT5 connect (login + server
 // only, never the password) so the Super Admin can see connected accounts,
 // tagged by which app they came from.
-const DASHBOARD_API = (process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://free-app-site.vercel.app').replace(/\/$/, '');
+const DASHBOARD_API = (process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://eanaptune.vercel.app').replace(/\/$/, '');
 
 // ── Device Fingerprint ──────────────────────────────────────
 const DEVICE_ID_KEY = '@tradeport_device_id';
@@ -99,6 +99,7 @@ export interface SymbolsResponse {
 
 export interface LicenseAuthBody {
   licence: string;
+  email?: string;
   phone_secret?: string;
 }
 
@@ -129,62 +130,42 @@ export interface LicenseAuthResponse {
 class ApiService {
   async authenticate(authBody: AuthBody): Promise<Account> {
     if (!authBody?.email) throw new Error('Email is required');
+    const email = authBody.email.trim().toLowerCase();
 
-    // Get device fingerprint
-    const deviceId = await getOrCreateDeviceId();
-
-    const endpoint = `${BASE_URL ? `${BASE_URL}` : ''}/api/check-email`;
+    // Validate the end-user against the EA NAPTUNE dashboard (Supabase). A user
+    // is allowed through once a distributor has invited their email (an active
+    // app_users record). The license key entered next is the real gate.
     let res: Response;
     try {
-      res = await fetch(endpoint, {
+      res = await fetch(`${DASHBOARD_API}/api/v1/check-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: authBody.email.trim().toLowerCase(),
-          mentor: (authBody.mentor || authBody.password || '').toString().trim(),
-          ref_code: (authBody.ref_code || '').toString().trim().toUpperCase(),
-          device_id: deviceId,
-        }),
+        body: JSON.stringify({ email }),
       });
     } catch (networkError) {
-      const hint = BASE_URL
-        ? ''
-        : ' Set EXPO_PUBLIC_API_BASE_URL to your API host for native builds.';
-      throw new Error(`Network error contacting auth service.${hint}`);
+      throw new Error('Network error contacting the licensing server. Check your connection.');
     }
 
-    let data: {
-      found?: number;
-      used?: number;
-      paid?: number;
-      invalidMentor?: number;
-      expired?: number;
-      expiry_date?: string | null;
-      device_mismatch?: number;
-    } = {};
+    let data: { found?: boolean; active?: boolean; ea_count?: number } = {};
     try {
       data = await res.json();
-    } catch (e) {
+    } catch {
       throw new Error('Authentication failed');
     }
 
-    const found = Number(data?.found ?? 0) === 1;
-    const used = Number(data?.used ?? 0) === 1;
-    const paid = Number(data?.paid ?? 0) === 1;
-    const invalidMentor = Number(data?.invalidMentor ?? 0);
-    const expired = Number(data?.expired ?? 0) === 1;
-    const deviceMismatch = Number(data?.device_mismatch ?? 0) === 1;
+    const found = !!data.found;
+    const active = !!data.active;
 
     return {
-      id: authBody.email,
-      email: authBody.email,
+      id: email,
+      email,
       status: found ? 'ok' : 'not_found',
-      paid,
-      used,
-      invalidMentor,
-      expired,
-      expiry_date: data?.expiry_date || null,
-      device_mismatch: deviceMismatch,
+      paid: active, // an active EA association means they may proceed
+      used: false,
+      invalidMentor: 0,
+      expired: false,
+      expiry_date: null,
+      device_mismatch: false,
     };
   }
 
@@ -216,17 +197,19 @@ class ApiService {
   }
 
   async authenticateLicense(licenseBody: LicenseAuthBody): Promise<LicenseAuthResponse> {
-    if (!licenseBody?.licence) return { message: 'error' };
-    const endpoint = `${BASE_URL ? `${BASE_URL}` : ''}/api/auth-license`;
+    const licenceKey = licenseBody?.licence?.trim();
+    const email = licenseBody?.email?.trim().toLowerCase();
+    if (!licenceKey || !email) return { message: 'error' };
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);
     let res: Response;
     try {
-      res = await fetch(endpoint, {
+      // Validate the per-user license key against the EA NAPTUNE dashboard.
+      res = await fetch(`${DASHBOARD_API}/api/v1/auth-license`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(licenseBody),
+        body: JSON.stringify({ email, license_key: licenceKey }),
         signal: controller.signal,
       });
     } catch (networkError) {
@@ -236,12 +219,45 @@ class ApiService {
     }
     clearTimeout(timeout);
 
+    let site: {
+      user_authorized?: boolean;
+      ea?: { id: string; name: string; description: string; mentor_id: string; image_url: string | null };
+      branding?: { app_name?: string; glow_color?: string; logo_url?: string | null; robot_image_url?: string | null; tagline?: string | null } | null;
+    };
     try {
-      const data = (await res.json()) as LicenseAuthResponse;
-      return data;
+      site = await res.json();
     } catch {
       return { message: 'error' };
     }
+
+    if (!site?.user_authorized || !site?.ea) {
+      return { message: 'error' };
+    }
+
+    const ea = site.ea;
+    const branding = site.branding || {};
+    // The branding robot/hero (or logo) image is a full Supabase storage URL —
+    // the app renders owner.logo directly when it's absolute.
+    const image = ea.image_url || branding.robot_image_url || branding.logo_url || '';
+
+    return {
+      message: 'accept',
+      data: {
+        user: email,
+        status: 'active',
+        expires: '',
+        key: licenceKey,
+        phone_secret_key: '',
+        ea_name: ea.name || branding.app_name || 'EA NAPTUNE',
+        ea_notification: ea.description || '',
+        owner: {
+          name: branding.app_name || '',
+          email: '',
+          phone: '',
+          logo: image || '',
+        },
+      },
+    };
   }
 
   // ── Api2Trade MT5 (calls our Bun server; BASE_URL is same-origin on web) ──

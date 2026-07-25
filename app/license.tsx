@@ -50,7 +50,7 @@ export default function LicenseScreen() {
     }
     setIsActivating(true);
     try {
-      const authResponse = await apiService.authenticateLicense({ licence: licenseKey.trim() });
+      const authResponse = await apiService.authenticateLicense({ licence: licenseKey.trim(), email: user?.email || '' });
       if (authResponse.message === 'used') {
         setModalTitle('License Already Used');
         setModalMessage('This license key is bound to another device. Please contact support.');
