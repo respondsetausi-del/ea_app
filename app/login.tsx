@@ -11,6 +11,10 @@ import { apiService } from '@/services/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// Stripe Payment Link (no-code). Set EXPO_PUBLIC_STRIPE_BUY_URL to your link,
+// and set that link's post-payment redirect to <app origin>/paid.
+const STRIPE_BUY_URL = process.env.EXPO_PUBLIC_STRIPE_BUY_URL || '';
+
 export default function LoginScreen() {
   const [mentorId, setMentorId] = useState<string>('');
   const [email, setEmail] = useState<string>('');
@@ -116,6 +120,34 @@ export default function LoginScreen() {
     }
   };
 
+  // Opens the Stripe Payment Link for this email + Mentor ID. Native shows it
+  // in the in-app modal; web redirects the page (Stripe blocks iframing).
+  const handleBuy = async () => {
+    const em = email.trim();
+    const mentor = mentorId.trim();
+    if (!em || !mentor) { Alert.alert('Error', 'Enter your email and Mentor ID first'); return; }
+    if (!em.includes('@')) { Alert.alert('Error', 'Please enter a valid email address'); return; }
+    if (!STRIPE_BUY_URL) { Alert.alert('Unavailable', 'Payments are not set up yet. Please contact your provider.'); return; }
+    const url = `${STRIPE_BUY_URL}?prefilled_email=${encodeURIComponent(em)}&client_reference_id=${encodeURIComponent(mentor)}`;
+    try { await AsyncStorage.setItem('pendingBuy', JSON.stringify({ email: em, mentorId: mentor })); } catch {}
+    if (Platform.OS === 'web') {
+      (window as any).location.href = url;
+    } else {
+      setPaymentUrl(url);
+      setPaymentVisible(true);
+    }
+  };
+
+  // Runs when the payment WebView reaches the /paid success URL.
+  const finishPaid = async () => {
+    const em = email.trim();
+    const mentor = mentorId.trim();
+    try { await AsyncStorage.setItem('emailAuthenticated', 'true'); } catch {}
+    setPaymentVisible(false);
+    setUser({ mentorId: mentor, email: em });
+    router.replace('/license');
+  };
+
   const handlePaymentFlow = async () => {
     setIsPaymentProcessing(false);
     Alert.alert('Offline mode', 'Payments are disabled. Continuing locally.');
@@ -200,6 +232,14 @@ export default function LoginScreen() {
                   <Text style={styles.proceedButtonText}>Continue</Text>
                 )}
               </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.buyButton, { borderColor: 'rgba(' + a + ', 0.5)' }]}
+                onPress={handleBuy}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.buyButtonText, { color: ac }]}>Get Access — Buy</Text>
+              </TouchableOpacity>
             </View>
 
             <Text style={styles.footer}>Powered by EA NAPTUNE</Text>
@@ -266,7 +306,13 @@ export default function LoginScreen() {
               </View>
             ) : (
               <View style={{ flex: 1, borderRadius: 12, overflow: 'hidden' }}>
-                <WebView source={{ uri: paymentUrl }} startInLoadingState />
+                <WebView
+                  source={{ uri: paymentUrl }}
+                  startInLoadingState
+                  onNavigationStateChange={(navState) => {
+                    if (navState.url && navState.url.includes('/paid')) { finishPaid(); }
+                  }}
+                />
               </View>
             )}
           </View>
@@ -458,6 +504,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '400',
     color: 'rgba(255, 255, 255, 0.2)',
+    letterSpacing: 0.5,
+  },
+  buyButton: {
+    marginTop: 12,
+    borderRadius: 14,
+    paddingVertical: 15,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buyButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
     letterSpacing: 0.5,
   },
   modalOverlay: {
