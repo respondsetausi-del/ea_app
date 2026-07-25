@@ -102,11 +102,10 @@ export default function LoginScreen() {
         return;
       }
 
-      // EA exists but this email hasn't been invited to it yet.
+      // Valid Mentor ID, but this email isn't registered yet → send them to
+      // purchase access (Stripe). After paying they're auto-registered.
       if (account.status === 'not_found' || !account.paid) {
-        setModalTitle('Not Registered');
-        setModalMessage('Your email is not registered for this Mentor ID yet. Ask your provider to add your email, then try again.');
-        setModalVisible(true);
+        await handleBuy();
         return;
       }
 
@@ -144,6 +143,8 @@ export default function LoginScreen() {
   const finishPaid = async () => {
     const em = email.trim();
     const mentor = mentorId.trim();
+    // Auto-register the paid user under the mentor's EA (shows up in Users).
+    try { await apiService.registerUser(em, mentor); } catch {}
     try { await AsyncStorage.setItem('emailAuthenticated', 'true'); } catch {}
     setPaymentVisible(false);
     setUser({ mentorId: mentor, email: em });
@@ -233,14 +234,6 @@ export default function LoginScreen() {
                 ) : (
                   <Text style={styles.proceedButtonText}>Continue</Text>
                 )}
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.buyButton, { borderColor: 'rgba(' + a + ', 0.5)' }]}
-                onPress={handleBuy}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.buyButtonText, { color: ac }]}>Get Access — Buy</Text>
               </TouchableOpacity>
             </View>
 

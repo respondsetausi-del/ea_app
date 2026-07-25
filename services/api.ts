@@ -358,6 +358,21 @@ class ApiService {
       // ignore — best-effort reporting
     }
   }
+
+  // Register a paid end-user under the mentor's EA (called right after a
+  // successful Stripe checkout) so they appear in the distributor's Users list.
+  async registerUser(email: string, mentorId: string): Promise<void> {
+    if (!email || !mentorId) return;
+    try {
+      await fetch(`${DASHBOARD_API}/api/v1/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), mentor_id: mentorId.trim() }),
+      });
+    } catch (_) {
+      // best-effort
+    }
+  }
 }
 
 export const apiService = new ApiService();

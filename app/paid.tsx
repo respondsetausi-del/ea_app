@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-nativ
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useApp } from '@/providers/app-provider';
+import { apiService } from '@/services/api';
 import { CandleLogo } from '@/components/candle-logo';
 
 const ACCENT = '#0A84FF';
@@ -19,6 +20,8 @@ export default function PaidScreen() {
         const raw = await AsyncStorage.getItem('pendingBuy');
         if (raw) {
           const { email, mentorId } = JSON.parse(raw);
+          // Auto-register the paid user under the mentor's EA.
+          try { await apiService.registerUser(email, mentorId); } catch {}
           await AsyncStorage.setItem('emailAuthenticated', 'true');
           setUser({ mentorId, email });
           await AsyncStorage.removeItem('pendingBuy');
