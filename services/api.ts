@@ -9,7 +9,7 @@ const BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL || '').replace(/\/$/, '')
 const DASHBOARD_API = (process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://eanaptune.vercel.app').replace(/\/$/, '');
 
 // ── Device Fingerprint ──────────────────────────────────────
-const DEVICE_ID_KEY = '@tradeport_device_id';
+const DEVICE_ID_KEY = '@ea_naptune_device_id';
 
 function generateUUID(): string {
   // Works in both React Native and web contexts
@@ -41,7 +41,6 @@ async function getOrCreateDeviceId(): Promise<string> {
 export interface AuthBody {
   email: string;
   password?: string;
-  mentor?: string;
   ref_code?: string;
 }
 
@@ -51,10 +50,19 @@ export interface Account {
   status: string;
   paid: boolean;
   used: boolean;
-  invalidMentor?: number;
   expired?: boolean;
   expiry_date?: string | null;
   device_mismatch?: boolean;
+  /**
+   * Where this client sits in the mentor → super-admin approval flow.
+   * 'unknown'  — nobody has added them yet (send to checkout)
+   * 'pending'  — a mentor added them, awaiting super-admin approval
+   * 'approved' — cleared to use the app
+   */
+  approvalStatus?: 'unknown' | 'pending' | 'approved' | 'rejected';
+  hasLicense?: boolean;
+  /** Super-admin switch: when false, checkout is skipped entirely. */
+  requirePayment?: boolean;
 }
 
 export interface App {
@@ -131,46 +139,47 @@ class ApiService {
   async authenticate(authBody: AuthBody): Promise<Account> {
     if (!authBody?.email) throw new Error('Email is required');
     const email = authBody.email.trim().toLowerCase();
-    const mentorId = (authBody.mentor || '').toString().trim();
-
-    // The Mentor ID is an EA's id. Validate it — and whether this email is
-    // invited to that EA — against the EA NAPTUNE dashboard config endpoint.
+    // Email-only auth against the dashboard's app_users table — the same table
+    // mentors add their clients to. Access is granted by super-admin approval,
+    // not by payment: a mentor's client may be approved after paying offline.
     let res: Response;
     try {
-      res = await fetch(
-        `${DASHBOARD_API}/api/v1/config/${encodeURIComponent(mentorId)}?email=${encodeURIComponent(email)}`,
-        { method: 'GET', headers: { 'Accept': 'application/json' } }
-      );
+      res = await fetch(`${DASHBOARD_API}/api/v1/authorize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
     } catch (networkError) {
       throw new Error('Network error contacting the licensing server. Check your connection.');
     }
 
-    // 404 → the Mentor ID doesn't match any active EA.
-    if (res.status === 404) {
-      return {
-        id: email, email, status: 'ok', paid: false, used: false,
-        invalidMentor: 1, expired: false, expiry_date: null, device_mismatch: false,
-      };
-    }
-
-    let data: { user_authorized?: boolean } = {};
+    let data: {
+      found?: boolean; status?: string; authorized?: boolean;
+      paid?: boolean; hasLicense?: boolean; requirePayment?: boolean;
+    } = {};
     try {
       data = await res.json();
     } catch {
       throw new Error('Authentication failed');
     }
 
-    const authorized = !!data.user_authorized;
+    const authorized = !!data.authorized;
+
     return {
       id: email,
       email,
       status: authorized ? 'ok' : 'not_found',
-      paid: authorized, // invited to this EA → may proceed to the license step
+      // `paid` is now informational only — approval is the gate.
+      paid: !!data.paid,
       used: false,
-      invalidMentor: 0,
       expired: false,
       expiry_date: null,
       device_mismatch: false,
+      approvalStatus: (data.status as Account['approvalStatus']) || 'unknown',
+      hasLicense: !!data.hasLicense,
+      // Default true: a server that doesn't report the flag must not be read
+      // as "payment disabled".
+      requirePayment: data.requirePayment !== false,
     };
   }
 

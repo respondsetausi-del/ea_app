@@ -13,16 +13,16 @@ This project builds a static web export of the Expo app and serves it via Bun in
 ### Build and run locally
 ```bash
 # Build the image
-docker build -t tradeport-ea:web .
+docker build -t ea_naptune:web .
 
 # Run the container (serves on http://localhost:3000)
-docker run --rm -p 3000:3000 tradeport-ea:web
+docker run --rm -p 3000:3000 ea_naptune:web
 ```
 
 ### Deploy to Render
 1. Push your repo to GitHub/GitLab.
 2. In Render, create a New Web Service and select your repo.
-3. Render detects `render.yaml` and configures a docker web service named `tradeport-ea-web`.
+3. Render detects `render.yaml` and configures a docker web service named `ea-naptune-web`.
 4. Deploy. The service will:
    - Install dependencies with Bun
    - Build the web export to `dist/`

@@ -1,11 +1,12 @@
 import React, { useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions, Platform, TouchableWithoutFeedback } from 'react-native';
-import { Home, TrendingUp, Settings, X } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Platform, TouchableWithoutFeedback, Alert } from 'react-native';
+import { Home, TrendingUp, Settings, X, LogOut } from 'lucide-react-native';
 import { router, usePathname } from 'expo-router';
 import { useSidebar } from '@/providers/sidebar-provider';
 import { useTheme } from '@/providers/theme-provider';
+import { useApp } from '@/providers/app-provider';
+import { CandleLogo } from '@/components/candle-logo';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SIDEBAR_WIDTH = 280;
 
 const NAV_ITEMS = [
@@ -14,9 +15,13 @@ const NAV_ITEMS = [
   { key: '/settings', label: 'Settings', icon: Settings, route: '/settings' },
 ];
 
+const MUTED = 'rgba(255,255,255,0.45)';
+const HAIRLINE = 'rgba(255,255,255,0.10)';
+
 export function Sidebar() {
   const { isOpen, close } = useSidebar();
   const { theme } = useTheme();
+  const { user, eas, signOut } = useApp();
   const a = theme.accentRgb;
   const ac = theme.accent;
   const pathname = usePathname();
@@ -25,120 +30,122 @@ export function Sidebar() {
   const overlayAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (isOpen) {
-      Animated.parallel([
-        Animated.spring(slideAnim, {
-          toValue: 0,
-          useNativeDriver: true,
-          tension: 65,
-          friction: 11,
-        }),
-        Animated.timing(overlayAnim, {
-          toValue: 1,
-          duration: 250,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.spring(slideAnim, {
-          toValue: -SIDEBAR_WIDTH,
-          useNativeDriver: true,
-          tension: 65,
-          friction: 11,
-        }),
-        Animated.timing(overlayAnim, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }
+    Animated.parallel([
+      Animated.spring(slideAnim, {
+        toValue: isOpen ? 0 : -SIDEBAR_WIDTH,
+        useNativeDriver: true,
+        tension: 65,
+        friction: 11,
+      }),
+      Animated.timing(overlayAnim, {
+        toValue: isOpen ? 1 : 0,
+        duration: isOpen ? 250 : 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
   }, [isOpen]);
 
   const handleNav = (route: string) => {
     close();
-    setTimeout(() => {
-      router.push(route as any);
-    }, 100);
+    setTimeout(() => router.push(route as any), 100);
+  };
+
+  const handleSignOut = () => {
+    const doSignOut = async () => {
+      close();
+      await signOut();
+      router.replace('/login');
+    };
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && !window.confirm('Sign out of EA NAPTUNE?')) return;
+      doSignOut();
+      return;
+    }
+    Alert.alert('Sign out', 'Sign out of EA NAPTUNE?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign out', style: 'destructive', onPress: doSignOut },
+    ]);
   };
 
   return (
     <>
-      {/* Backdrop overlay */}
       <Animated.View
         pointerEvents={isOpen ? 'auto' : 'none'}
-        style={[
-          styles.overlay,
-          { opacity: overlayAnim },
-        ]}
+        style={[styles.overlay, { opacity: overlayAnim }]}
       >
         <TouchableWithoutFeedback onPress={close}>
           <View style={styles.overlayTouch} />
         </TouchableWithoutFeedback>
       </Animated.View>
 
-      {/* Sidebar panel */}
-      <Animated.View
-        style={[
-          styles.sidebar,
-          { transform: [{ translateX: slideAnim }] },
-        ]}
-      >
-        {/* Glass shine overlay */}
-        <View style={styles.sidebarShine} />
-        <View style={styles.sidebarEdge} />
-
-        {/* Header */}
+      <Animated.View style={[styles.sidebar, { transform: [{ translateX: slideAnim }] }]}>
+        {/* Brand */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>EA NAPTUNE</Text>
-          <TouchableOpacity onPress={close} style={styles.closeBtn}>
-            <X color="rgba(255,255,255,0.6)" size={20} />
+          <View style={styles.brand}>
+            <View style={[styles.brandMark, { shadowColor: ac }]}>
+              <CandleLogo size={20} color={ac} />
+            </View>
+            <Text style={styles.brandName}>EA NAPTUNE</Text>
+          </View>
+          <TouchableOpacity onPress={close} style={styles.closeBtn} activeOpacity={0.6}>
+            <X color={MUTED} size={16} />
           </TouchableOpacity>
         </View>
 
-        {/* Nav items */}
+        <Text style={styles.groupLabel}>MENU</Text>
+
         <View style={styles.navList}>
           {NAV_ITEMS.map((item) => {
-            const isActive = pathname === item.key || 
-              (item.key === '/' && pathname === '/index') ||
-              (item.key === '/' && pathname === '');
+            const isActive =
+              pathname === item.key ||
+              (item.key === '/' && (pathname === '/index' || pathname === ''));
             const Icon = item.icon;
             return (
               <TouchableOpacity
                 key={item.key}
                 style={[
                   styles.navItem,
-                  isActive && styles.navItemActive,
-                  isActive && { backgroundColor: 'rgba(' + a + ', 0.12)' },
-                  isActive && Platform.OS === 'web' && { boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.15), 0 0 12px rgba(' + a + ', 0.15)' },
+                  isActive && { backgroundColor: 'rgba(' + a + ', 0.14)', borderColor: 'rgba(' + a + ', 0.4)' },
                 ]}
                 onPress={() => handleNav(item.route)}
                 activeOpacity={0.6}
               >
-                <View style={[
-                  styles.navIconWrap,
-                  isActive && { backgroundColor: 'rgba(' + a + ', 0.2)', borderColor: 'rgba(' + a + ', 0.3)' },
-                ]}>
-                  <Icon color={isActive ? ac : 'rgba(255,255,255,0.5)'} size={18} />
-                </View>
-                <Text style={[
-                  styles.navLabel,
-                  isActive && { color: '#FFFFFF' },
-                ]}>{item.label}</Text>
-                {isActive && (
-                  <View style={[styles.activeIndicator, { backgroundColor: ac }]} />
-                )}
+                <Icon color={isActive ? ac : MUTED} size={17} />
+                <Text style={[styles.navLabel, isActive && { color: '#FFFFFF' }]}>{item.label}</Text>
+                {isActive && <View style={[styles.activeDot, { backgroundColor: ac }]} />}
               </TouchableOpacity>
             );
           })}
         </View>
 
-        {/* Bottom brand */}
-        <View style={styles.sidebarFooter}>
-          <View style={[styles.footerDot, { backgroundColor: ac }]} />
-          <Text style={styles.footerText}>v1.0</Text>
-        </View>
+        {/* Everything below is pinned to the bottom by this spacer, which is
+            what closes the dead gap the old layout left mid-panel. */}
+        <View style={{ flex: 1 }} />
+
+        {user?.email && (
+          <>
+            <Text style={styles.groupLabel}>ACCOUNT</Text>
+            <View style={styles.accountCard}>
+              <Text style={styles.accountEmail} numberOfLines={1} ellipsizeMode="tail">
+                {user.email}
+              </Text>
+              <Text style={styles.accountMeta}>
+                {eas.length === 0
+                  ? 'No EA activated'
+                  : eas.length === 1
+                    ? '1 EA activated'
+                    : eas.length + ' EAs activated'}
+              </Text>
+            </View>
+
+            <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut} activeOpacity={0.6}>
+              <LogOut color="rgba(255,120,120,0.85)" size={15} />
+              <Text style={styles.signOutText}>Sign out</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        <Text style={styles.version}>Version 1.0</Text>
       </Animated.View>
     </>
   );
@@ -147,141 +154,124 @@ export function Sidebar() {
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
     zIndex: 998,
   },
-  overlayTouch: {
-    flex: 1,
-  },
+  overlayTouch: { flex: 1 },
   sidebar: {
     position: 'absolute',
     top: 0,
     left: 0,
     bottom: 0,
     width: SIDEBAR_WIDTH,
-    backgroundColor: 'rgba(15, 15, 15, 0.85)',
+    // Flat and quiet, matching the cards: one hairline edge instead of the
+    // old shine overlay, gradient edge strip and inset highlights.
+    backgroundColor: '#0B0B0C',
+    borderRightWidth: 1,
+    borderRightColor: HAIRLINE,
     zIndex: 999,
-    borderRightWidth: 2,
-    borderTopRightRadius: 28,
-    borderBottomRightRadius: 28,
-    borderRightColor: 'rgba(255, 255, 255, 0.15)',
-    paddingTop: 60,
-    paddingHorizontal: 16,
-    paddingBottom: 30,
-    overflow: 'hidden',
+    paddingTop: 56,
+    paddingHorizontal: 14,
+    paddingBottom: 22,
     ...(Platform.OS === 'web' && {
-      backdropFilter: 'blur(60px) saturate(180%)',
-      WebkitBackdropFilter: 'blur(60px) saturate(180%)',
-      boxShadow: 'inset 0 1px 3px rgba(255,255,255,0.15), 8px 0 40px rgba(0,0,0,0.5)',
-    }),
-  },
-  sidebarShine: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: '40%',
-    borderTopRightRadius: 28,
-    ...(Platform.OS === 'web' && {
-      background: 'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 60%, rgba(255,255,255,0) 100%)',
-      pointerEvents: 'none',
-    }),
-  },
-  sidebarEdge: {
-    position: 'absolute',
-    top: 60,
-    right: 0,
-    width: 2,
-    bottom: 30,
-    ...(Platform.OS === 'web' && {
-      background: 'linear-gradient(180deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0.15) 100%)',
-      pointerEvents: 'none',
+      boxShadow: '12px 0 40px rgba(0,0,0,0.5)',
     }),
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 40,
+    marginBottom: 28,
     paddingHorizontal: 4,
   },
-  headerTitle: {
-    fontSize: 18,
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  brandMark: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+  },
+  brandName: {
+    fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
-    letterSpacing: 2,
+    letterSpacing: 1.6,
   },
   closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: HAIRLINE,
   },
-  navList: {
-    flex: 1,
-    gap: 6,
+  // Same caption treatment as the home screen's section labels.
+  groupLabel: {
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 2,
+    marginBottom: 10,
+    marginLeft: 6,
   },
+  navList: { gap: 6 },
   navItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 18,
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    // Capsules, matching the card language — and no square icon wrapper.
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: 'transparent',
   },
-  navItemActive: {
-    borderWidth: 1.5,
-    borderTopColor: 'rgba(255,255,255,0.2)',
-    borderLeftColor: 'rgba(255,255,255,0.12)',
-    borderRightColor: 'rgba(255,255,255,0.08)',
-    borderBottomColor: 'rgba(0,0,0,0.15)',
-    ...(Platform.OS === 'web' && {
-      backdropFilter: 'blur(40px)',
-      WebkitBackdropFilter: 'blur(40px)',
-    }),
-  },
-  navIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
   navLabel: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
-    color: 'rgba(255,255,255,0.5)',
+    color: MUTED,
     letterSpacing: 0.3,
     flex: 1,
   },
-  activeIndicator: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+  activeDot: { width: 5, height: 5, borderRadius: 2.5 },
+  accountCard: {
+    backgroundColor: 'rgba(255,255,255,0.035)',
+    borderWidth: 1,
+    borderColor: HAIRLINE,
+    borderRadius: 16,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    marginBottom: 8,
   },
-  sidebarFooter: {
+  accountEmail: { fontSize: 12.5, fontWeight: '600', color: '#FFFFFF' },
+  accountMeta: { fontSize: 10.5, color: MUTED, marginTop: 3, letterSpacing: 0.3 },
+  signOutBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 4,
+    gap: 9,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,120,120,0.2)',
   },
-  footerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+  signOutText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,120,120,0.85)',
+    letterSpacing: 0.3,
   },
-  footerText: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.3)',
+  version: {
+    fontSize: 10,
+    color: 'rgba(255,255,255,0.22)',
     letterSpacing: 0.5,
+    textAlign: 'center',
+    marginTop: 16,
   },
 });

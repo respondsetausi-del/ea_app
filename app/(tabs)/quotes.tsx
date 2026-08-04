@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
+import { SURFACE, TEXT, RADIUS, GROUP_LABEL } from '@/constants/surface';
 import { PageBackground } from '@/components/page-background';
 import { Symbol as ApiSymbol, apiService } from '@/services/api';
 
@@ -37,8 +38,8 @@ export default function QuotesScreen() {
   const a = thm.accentRgb;
   const ac = thm.accent;
   const isNeon = glassMode === 'neon';
-  const isLiquid = glassMode === 'liquid';
-  const isCmd = glassMode === 'commander';
+  const isLiquid = false;
+  const isCmd = false;
   const cc = ac;
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [apiSymbols, setApiSymbols] = useState<ApiSymbol[]>([]);
@@ -265,7 +266,7 @@ export default function QuotesScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.container, Platform.OS === 'web' && { backgroundImage: isNeon ? 'linear-gradient(135deg, rgba(' + a + ', 0.9) 0%, rgba(' + a + ', 0.5) 30%, rgba(' + a + ', 0.1) 65%, rgba(0,0,0,0.95) 90%, #000 100%)' : isLiquid ? 'linear-gradient(160deg, #1a1a1e 0%, #111113 40%, #0a0a0c 100%)' : isCmd ? 'linear-gradient(170deg, rgba(30,10,10,0.6) 0%, #050505 40%, #000 100%)' : 'linear-gradient(160deg, rgba(' + a + ', 0.08) 0%, #050505 40%, #000 100%)' }]}>
+    <SafeAreaView style={styles.container}>
       <PageBackground eaImage={primaryEAImage} />
       {/* Header */}
       <View style={styles.header}>
@@ -330,7 +331,7 @@ export default function QuotesScreen() {
                 <TouchableOpacity
                   testID={`quote-item-${quote.symbol}`}
                   key={quote.symbol}
-                  style={[styles.quoteCard, quote.isActive && styles.activeQuoteCard, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 50% at 20% 20%, rgba(255,255,255,0.12) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.06) 0%, rgba(0,0,0,0.65) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.2), 0 4px 8px rgba(0,0,0,0.3), 0 12px 24px rgba(0,0,0,0.25), 0 0 0 0.5px rgba(255,255,255,0.06)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', borderColor: 'rgba(' + a + ', 0.4)', borderWidth: '1.5px', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', borderColor: ac, borderWidth: '2px', boxShadow: '0 0 10px rgba(' + a + ', 0.3), 0 0 20px rgba(' + a + ', 0.15), 0 4px 14px rgba(0,0,0,0.4)' } : { background: 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(0,0,0,0.5) 100%)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 4px 12px rgba(0,0,0,0.35), 0 0 24px rgba(' + a + ', 0.25), 0 0 48px rgba(' + a + ', 0.1)' })]}
+                  style={[styles.quoteCard, quote.isActive && styles.activeQuoteCard]}
                   onPress={() => handleQuoteTap(quote.symbol)}
                   activeOpacity={0.7}
                 >
@@ -367,7 +368,7 @@ export default function QuotesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#050505',
+    backgroundColor: SURFACE.ground,
   },
   header: {
     flexDirection: 'row', alignItems: 'center',
@@ -375,16 +376,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.08)',
   },
   backButton: {
-    marginRight: 16, padding: 8, borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    marginRight: 16, width: 36, height: 36, borderRadius: RADIUS.pill,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: SURFACE.card,
+    borderWidth: 1, borderColor: SURFACE.hairline,
   },
   headerContent: { flex: 1 },
   titleContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
   headerTitle: { fontSize: 18, fontWeight: '800', letterSpacing: 1.5, marginRight: 12 },
   statusContainer: { flexDirection: 'row', alignItems: 'center' },
   statusText: { fontSize: 10, fontWeight: '600', marginLeft: 4, letterSpacing: 0.5 },
-  botName: { color: '#CCCCCC', fontSize: 12, fontWeight: '500', textAlign: 'center' },
+  botName: { color: TEXT.muted, fontSize: 12, fontWeight: '500', textAlign: 'center' },
   content: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
   refreshButton: {
     padding: 10, marginLeft: 8, borderRadius: 14,
@@ -406,25 +408,21 @@ const styles = StyleSheet.create({
   emptyText: { color: '#CCCCCC', fontSize: 18, fontWeight: '600', marginBottom: 8 },
   emptySubtext: { color: 'rgba(255,255,255,0.4)', fontSize: 14, textAlign: 'center' },
   quoteCard: {
-    backgroundColor: 'rgba(44, 44, 46, 0.65)', borderRadius: 22, padding: 18, marginBottom: 14,
-    borderWidth: 0.5, borderColor: 'rgba(255, 255, 255, 0.12)',
-    ...(Platform.OS !== 'web' && {
-      shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.35, shadowRadius: 16, elevation: 6,
-    }),
+    backgroundColor: SURFACE.card, borderRadius: RADIUS.card, padding: 16, marginBottom: 10,
+    borderWidth: 1, borderColor: SURFACE.hairline,
   },
   activeQuoteCard: {
-    borderColor: 'rgba(0, 255, 0, 0.4)', borderWidth: 1,
-    ...(Platform.OS === 'web' && { boxShadow: '0 0 20px rgba(0, 255, 0, 0.1)' }),
+    // Semantic green for "live", kept separate from the accent.
+    borderColor: 'rgba(48, 209, 88, 0.45)', borderWidth: 1,
   },
   quoteHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   symbolContainer: { flexDirection: 'row', alignItems: 'center' },
-  symbol: { color: '#FFFFFF', fontSize: 18, fontWeight: '700', letterSpacing: 0.5 },
+  symbol: { color: TEXT.primary, fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
   activeIndicator: { marginLeft: 8 },
   priceContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
   priceColumn: { alignItems: 'center', flex: 1 },
-  priceLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '600', marginBottom: 6, letterSpacing: 0.8 },
+  priceLabel: { ...GROUP_LABEL, fontSize: 9, marginBottom: 6 },
   priceValue: { color: '#FFFFFF', fontSize: 16, fontWeight: '600', fontFamily: 'monospace' },
-  platformValue: { color: '#CCCCCC', fontSize: 14, fontWeight: '500', fontFamily: 'monospace' },
+  platformValue: { color: TEXT.muted, fontSize: 13, fontWeight: '500', fontFamily: 'monospace' },
   directionValue: { fontSize: 14, fontWeight: '600', fontFamily: 'monospace' },
 });

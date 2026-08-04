@@ -184,7 +184,7 @@ export function VoiceOverlay() {
     if (!p) { say("Sorry, try again.", resume); return; }
 
     const colors: ThemeName[] = ['red', 'blue', 'green', 'purple', 'orange', 'cyan'];
-    const glasses: GlassMode[] = ['neon', 'minimal', 'liquid', 'commander'];
+    const glasses: GlassMode[] = ['neon', 'sectioned'];
 
     switch (p.action) {
       case 'nav': say('Opening ' + p.param + '.', resume); navigate(p.param!); break;

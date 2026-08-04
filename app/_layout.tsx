@@ -154,7 +154,7 @@ function RootLayoutNav() {
     if (Platform.OS !== 'web') return;
 
     // 1. Load Google Fonts (once)
-    const linkId = 'tradeport-google-fonts';
+    const linkId = 'ea_naptune-google-fonts';
     if (!document.getElementById(linkId)) {
       const link = document.createElement('link');
       link.id = linkId;
@@ -164,7 +164,7 @@ function RootLayoutNav() {
     }
 
     // 2. Inject/update <style> that overrides RN Web's inline font shorthand
-    const styleId = 'tradeport-font-override';
+    const styleId = 'ea_naptune-font-override';
     let styleEl = document.getElementById(styleId) as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');

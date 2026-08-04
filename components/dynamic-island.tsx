@@ -68,7 +68,7 @@ const CMD_CHIPS = [
 ];
 
 const COLORS: ThemeName[] = ['red', 'blue', 'green', 'purple', 'orange', 'cyan'];
-const GLASSES: GlassMode[] = ['neon', 'minimal', 'liquid', 'commander', 'mech'];
+const GLASSES: GlassMode[] = ['neon', 'sectioned'];
 
 interface DynamicIslandProps { visible: boolean; newSignal?: SignalLog | null; onSignalDismiss?: () => void; }
 
@@ -87,7 +87,7 @@ export function DynamicIsland({ visible, newSignal, onSignalDismiss }: DynamicIs
   const execCmdRef = useRef<(raw: string) => void>(() => {});
   const ac = theme.accent, ar = theme.accentRgb;
   const isWeb = Platform.OS === 'web';
-  const isNeon = glassMode === 'neon', isLiquid = glassMode === 'liquid', isCmd = glassMode === 'commander', isPill = glassMode === 'pill';
+  const isNeon = glassMode === 'neon' || glassMode === 'sectioned', isLiquid = false, isCmd = false, isPill = false;
 
   // Draggable position
   const screenW = Dimensions.get('window').width;
@@ -287,7 +287,7 @@ export function DynamicIsland({ visible, newSignal, onSignalDismiss }: DynamicIs
   };
 
   // Expose toggleVoice to window so Mech mic can trigger it
-  useEffect(() => { if (isWeb) (window as any).__tradeport_toggleVoice = toggleVoice; }, [toggleVoice]);
+  useEffect(() => { if (isWeb) (window as any).__ea_naptune_toggleVoice = toggleVoice; }, [toggleVoice]);
 
   // Run chip command — always works, auto-activates voice
   const runChip = (cmd: string) => {

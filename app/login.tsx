@@ -4,6 +4,7 @@ import { WebView } from 'react-native-webview';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CandleLogo } from '@/components/candle-logo';
+import { FloatingField } from '@/components/floating-field';
 // Networking disabled: avoid external browser/payment flows
 import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
@@ -18,7 +19,6 @@ const STRIPE_BUY_URL =
   process.env.EXPO_PUBLIC_STRIPE_BUY_URL || 'https://buy.stripe.com/dRm14n16e13nf0G19Re3e0U';
 
 export default function LoginScreen() {
-  const [mentorId, setMentorId] = useState<string>('');
   const [email, setEmail] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isPaymentProcessing, setIsPaymentProcessing] = useState<boolean>(false);
@@ -77,8 +77,8 @@ export default function LoginScreen() {
   }, [user, eas.length]);
 
   const handleProceed = async () => {
-    if (!mentorId.trim() || !email.trim()) {
-      Alert.alert('Error', 'Please fill in all fields');
+    if (!email.trim()) {
+      Alert.alert('Error', 'Please enter your email address');
       return;
     }
 
@@ -91,27 +91,43 @@ export default function LoginScreen() {
 
     try {
       const trimmedEmail = email.trim();
-      const trimmedMentor = mentorId.trim();
-      const account = await apiService.authenticate({ email: trimmedEmail, mentor: trimmedMentor });
+      const account = await apiService.authenticate({ email: trimmedEmail });
 
-      // Mentor ID isn't a known EA.
-      if ((account as any).invalidMentor === 1) {
-        setModalTitle('Invalid Mentor ID');
-        setModalMessage('That Mentor ID was not found. Double-check it with your provider.');
-        setModalVisible(true);
-        return;
-      }
-
-      // Valid Mentor ID, but this email isn't registered yet → send them to
-      // purchase access (Stripe). After paying they're auto-registered.
-      if (account.status === 'not_found' || !account.paid) {
+      if (account.status !== 'ok') {
+        // A mentor has added them and payment is already recorded — the only
+        // thing left is the super admin's approval. Don't charge them twice.
+        if (account.approvalStatus === 'pending' && account.paid) {
+          setModalTitle('Awaiting approval');
+          setModalMessage('We have your payment. Your access is being reviewed and will be enabled shortly.');
+          setModalVisible(true);
+          return;
+        }
+        if (account.approvalStatus === 'rejected') {
+          setModalTitle('Access declined');
+          setModalMessage('This account was not approved. Please contact your mentor.');
+          setModalVisible(true);
+          return;
+        }
+        // Payment switched off by the super admin → approval is the only gate,
+        // so never show checkout; just tell them where they stand.
+        if (account.requirePayment === false) {
+          setModalTitle(account.approvalStatus === 'pending' ? 'Awaiting approval' : 'No access yet');
+          setModalMessage(
+            account.approvalStatus === 'pending'
+              ? 'Your access is being reviewed and will be enabled shortly.'
+              : 'Ask your mentor to add this email address, then try again.'
+          );
+          setModalVisible(true);
+          return;
+        }
+        // Pending-but-unpaid, or nobody has added them yet → take payment.
         await handleBuy();
         return;
       }
 
       // Authenticated — persist and move to the license step.
       await AsyncStorage.setItem('emailAuthenticated', 'true');
-      setUser({ mentorId: trimmedMentor, email: account.email });
+      setUser({ email: account.email });
       router.push('/license');
     } catch (error) {
       console.error('Login error:', error);
@@ -121,16 +137,15 @@ export default function LoginScreen() {
     }
   };
 
-  // Opens the Stripe Payment Link for this email + Mentor ID. Native shows it
-  // in the in-app modal; web redirects the page (Stripe blocks iframing).
+  // Opens the Stripe Payment Link for this email. Native shows it in the
+  // in-app modal; web redirects the page (Stripe blocks iframing).
   const handleBuy = async () => {
     const em = email.trim();
-    const mentor = mentorId.trim();
-    if (!em || !mentor) { Alert.alert('Error', 'Enter your email and Mentor ID first'); return; }
+    if (!em) { Alert.alert('Error', 'Enter your email first'); return; }
     if (!em.includes('@')) { Alert.alert('Error', 'Please enter a valid email address'); return; }
     if (!STRIPE_BUY_URL) { Alert.alert('Unavailable', 'Payments are not set up yet. Please contact your provider.'); return; }
-    const url = `${STRIPE_BUY_URL}?prefilled_email=${encodeURIComponent(em)}&client_reference_id=${encodeURIComponent(mentor)}`;
-    try { await AsyncStorage.setItem('pendingBuy', JSON.stringify({ email: em, mentorId: mentor })); } catch {}
+    const url = `${STRIPE_BUY_URL}?prefilled_email=${encodeURIComponent(em)}`;
+    try { await AsyncStorage.setItem('pendingBuy', JSON.stringify({ email: em })); } catch {}
     if (Platform.OS === 'web') {
       (window as any).location.href = url;
     } else {
@@ -142,12 +157,9 @@ export default function LoginScreen() {
   // Runs when the payment WebView reaches the /paid success URL.
   const finishPaid = async () => {
     const em = email.trim();
-    const mentor = mentorId.trim();
-    // Auto-register the paid user under the mentor's EA (shows up in Users).
-    try { await apiService.registerUser(em, mentor); } catch {}
     try { await AsyncStorage.setItem('emailAuthenticated', 'true'); } catch {}
     setPaymentVisible(false);
-    setUser({ mentorId: mentor, email: em });
+    setUser({ email: em });
     router.replace('/license');
   };
 
@@ -157,7 +169,15 @@ export default function LoginScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView
+      style={[
+        styles.container,
+        Platform.OS === 'web' && {
+          backgroundImage:
+            'linear-gradient(135deg, rgba(' + a + ', 0.95) 0%, rgba(' + a + ', 0.7) 20%, rgba(' + a + ', 0.4) 40%, rgba(' + a + ', 0.2) 60%, rgba(' + a + ', 0.1) 80%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 1) 100%)',
+        },
+      ]}
+    >
       {/* Ambient gradient orbs */}
       <Animated.View style={[styles.orbTop, { opacity: glowAnim, backgroundColor: 'rgba(' + a + ', 0.12)' }]} />
       <Animated.View style={[styles.orbBottom, { opacity: glowAnim, backgroundColor: 'rgba(' + a + ', 0.08)' }]} />
@@ -182,38 +202,18 @@ export default function LoginScreen() {
               <Text style={styles.tagline}>Algorithmic Trading Platform</Text>
             </Animated.View>
 
-            {/* Glass Login Card */}
-            <View style={styles.glassCard}>
+            {/* Form sits directly on the gradient — no card. */}
+            <View style={styles.formBlock}>
               <Text style={styles.welcomeText}>Welcome Back</Text>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>MENTOR ID</Text>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter your mentor ID"
-                    placeholderTextColor="rgba(255, 255, 255, 0.3)"
-                    value={mentorId}
-                    onChangeText={setMentorId}
-                    autoCapitalize="none"
-                  />
-                </View>
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>EMAIL</Text>
-                <View style={styles.inputWrapper}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter your email"
-                    placeholderTextColor="rgba(255, 255, 255, 0.3)"
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                </View>
-              </View>
+              <FloatingField
+                testID="login-email"
+                label="Email"
+                value={email}
+                onChangeText={setEmail}
+                accentRgb={a}
+                keyboardType="email-address"
+              />
 
               <TouchableOpacity
                 style={[styles.proceedButton, (isLoading || isPaymentProcessing) && styles.proceedButtonDisabled, { backgroundColor: 'rgba(' + a + ', 0.85)', shadowColor: ac }]}
@@ -419,23 +419,9 @@ const styles = StyleSheet.create({
     marginTop: 6,
     letterSpacing: 0.8,
   },
-  glassCard: {
+  formBlock: {
     width: '100%',
     maxWidth: 360,
-    padding: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 24,
-    elevation: 12,
-    ...(Platform.OS === 'web' && {
-      backdropFilter: 'blur(40px)',
-      WebkitBackdropFilter: 'blur(40px)',
-    }),
   },
   welcomeText: {
     fontSize: 20,
@@ -443,29 +429,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     marginBottom: 28,
     letterSpacing: 0.3,
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: 'rgba(255, 255, 255, 0.5)',
-    marginBottom: 8,
-    letterSpacing: 0.5,
-  },
-  inputWrapper: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  input: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
+    textAlign: 'center',
   },
   proceedButton: {
     marginTop: 8,

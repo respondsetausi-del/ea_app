@@ -1,13 +1,19 @@
 import createContextHook from '@nkzw/create-context-hook';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform, Alert } from 'react-native';
+// AppState is aliased: this file already declares its own AppState interface.
+import { Platform, Alert, AppState as RNAppState } from 'react-native';
+
+/**
+ * How often an open app re-checks that its access is still valid, so a super
+ * admin revoking a client takes effect without waiting for a relaunch.
+ */
+const ACCESS_RECHECK_MS = 60_000;
 import { LicenseData, apiService } from '@/services/api';
 import signalsMonitor, { SignalLog } from '@/services/signals-monitor';
 import databaseSignalsPollingService, { DatabaseSignal } from '@/services/database-signals-polling';
 
 export interface User {
-  mentorId: string;
   email: string;
 }
 
@@ -103,6 +109,7 @@ interface AppState {
   databaseSignal: DatabaseSignal | null;
   isDatabaseSignalsPolling: boolean;
   setUser: (user: User) => void;
+  signOut: () => Promise<void>;
   addEA: (ea: EA) => Promise<boolean>;
   removeEA: (id: string) => Promise<boolean>;
   setActiveEA: (id: string) => Promise<void>;
@@ -402,14 +409,12 @@ export const [AppProvider, useApp] = createContextHook<AppState>(() => {
     if (!user?.email) return;
     try {
       console.log('Verifying subscription for:', user.email);
-      const account = await apiService.authenticate({
-        email: user.email,
-        mentor: user.mentorId || '0',
-      });
+      const account = await apiService.authenticate({ email: user.email });
 
+      // Approval is the gate, not payment: a mentor's client can be approved
+      // after paying offline, so kicking on !paid would lock them straight out.
       const shouldKick =
-        account.status === 'not_found' ||
-        !account.paid ||
+        account.status !== 'ok' ||
         (account as any).expired ||
         (account as any).device_mismatch;
 
@@ -429,14 +434,41 @@ export const [AppProvider, useApp] = createContextHook<AppState>(() => {
       // Network error — don't kick, let them use cached state
       console.log('Subscription check failed (network) — allowing cached access');
     }
-  }, [user?.email, user?.mentorId]);
-
-  // Run verification after user state is hydrated
-  useEffect(() => {
-    if (user?.email) {
-      verifySubscription();
-    }
   }, [user?.email]);
+
+  /**
+   * Sign out on the client. Clears the same keys verifySubscription clears when
+   * it kicks a revoked user, so both paths leave identical state behind.
+   * Activated EAs stay on the device — they are licence-bound, not session-bound.
+   */
+  const signOut = useCallback(async () => {
+    setUserState(null);
+    try {
+      await AsyncStorage.multiRemove(['user', 'emailAuthenticated']);
+    } catch (error) {
+      console.error('Sign out failed to clear storage:', error);
+    }
+  }, []);
+
+  // Run verification after user state is hydrated, then keep re-checking so a
+  // super admin revoking access takes effect while the app is already open —
+  // not only on next launch. Also re-checks the moment the app is foregrounded,
+  // which covers the common case of the client switching back to it.
+  useEffect(() => {
+    if (!user?.email) return;
+
+    verifySubscription();
+
+    const interval = setInterval(verifySubscription, ACCESS_RECHECK_MS);
+    const sub = RNAppState.addEventListener('change', (next) => {
+      if (next === 'active') verifySubscription();
+    });
+
+    return () => {
+      clearInterval(interval);
+      sub.remove();
+    };
+  }, [user?.email, verifySubscription]);
 
   const setUser = useCallback(async (newUser: User) => {
     setUserState(newUser);
@@ -1099,6 +1131,7 @@ export const [AppProvider, useApp] = createContextHook<AppState>(() => {
     databaseSignal,
     isDatabaseSignalsPolling,
     setUser,
+    signOut,
     addEA,
     removeEA,
     setActiveEA,

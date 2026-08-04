@@ -1,31 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, Image, KeyboardAvoidingView, ScrollView, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Alert, ActivityIndicator, KeyboardAvoidingView, ScrollView, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { ArrowLeft } from 'lucide-react-native';
 import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
-import { PageBackground } from '@/components/page-background';
+import { CandleLogo } from '@/components/candle-logo';
+import { FloatingField } from '@/components/floating-field';
 import { apiService } from '@/services/api';
 
 export default function LicenseScreen() {
   const [licenseKey, setLicenseKey] = useState<string>('');
   const [isActivating, setIsActivating] = useState<boolean>(false);
   const { addEA, eas, user, isFirstTime } = useApp();
-  const { theme: thm, glassMode } = useTheme();
+  const { theme: thm } = useTheme();
   const a = thm.accentRgb;
   const ac = thm.accent;
-  const isNeon = glassMode === 'neon';
-  const isLiquid = glassMode === 'liquid';
-  const isCmd = glassMode === 'commander';
   const hasActiveBots = eas.length > 0;
-  const primaryEA = eas.length > 0 ? eas[0] : null;
-  const primaryEAImage = (() => {
-    if (!primaryEA || !primaryEA.userData || !primaryEA.userData.owner) return null;
-    const raw = (primaryEA.userData.owner.logo || '').toString().trim();
-    if (!raw) return null;
-    if (/^https?:\/\//i.test(raw)) return raw;
-    return 'https://tradeportea.com/admin/uploads/' + raw.replace(/^\/+/, '');
-  })();
   const [modalVisible, setModalVisible] = useState<boolean>(false);
   const [modalTitle, setModalTitle] = useState<string>('');
   const [modalMessage, setModalMessage] = useState<string>('');
@@ -83,8 +73,17 @@ export default function LicenseScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.container, Platform.OS === 'web' && { backgroundImage: isNeon ? 'linear-gradient(135deg, rgba(' + a + ', 0.7) 0%, rgba(' + a + ', 0.3) 25%, rgba(0,0,0,0.85) 55%, #000 100%)' : isLiquid ? 'linear-gradient(160deg, #1a1a1e 0%, #111113 40%, #0a0a0c 100%)' : 'linear-gradient(170deg, rgba(' + a + ', 0.06) 0%, #050505 40%, #000 100%)' }]}>
-      <PageBackground eaImage={primaryEAImage} />
+    <SafeAreaView
+      style={[
+        styles.container,
+        Platform.OS === 'web' && {
+          // Same gradient as the splash and login screens, so the three read as
+          // one continuous flow rather than three different products.
+          backgroundImage:
+            'linear-gradient(135deg, rgba(' + a + ', 0.95) 0%, rgba(' + a + ', 0.7) 20%, rgba(' + a + ', 0.4) 40%, rgba(' + a + ', 0.2) 60%, rgba(' + a + ', 0.1) 80%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 1) 100%)',
+        },
+      ]}
+    >
       {hasActiveBots && (
         <View style={styles.header}>
           <TouchableOpacity style={[styles.backButton, Platform.OS === 'web' && { backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)' }]} onPress={() => router.back()}>
@@ -95,28 +94,52 @@ export default function LicenseScreen() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.content}>
+            {/* Same masthead as login: glowing logo tile, name, tagline. */}
             <View style={styles.logoContainer}>
-              <Image source={require('@/assets/images/icon.png')} style={styles.appIcon} resizeMode="contain" />
-              <Text style={styles.title}>Enter License Key</Text>
-            </View>
-            <View style={styles.form}>
-              <View style={[styles.inputWrap, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 50% at 20% 20%, rgba(255,255,255,0.1) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.04) 0%, rgba(0,0,0,0.6) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.2), 0 4px 16px rgba(0,0,0,0.3)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', border: '1.5px solid rgba(' + a + ', 0.4)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '2px solid ' + ac, boxShadow: '0 0 12px rgba(' + a + ', 0.35), 0 0 24px rgba(' + a + ', 0.2), 0 8px 20px rgba(0,0,0,0.5)' } : { background: 'rgba(16,16,18,0.97)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', border: '0.5px solid rgba(255,255,255,0.04)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 0 28px rgba(' + a + ', 0.35), 0 0 56px rgba(' + a + ', 0.15)' })]}>
-                <TextInput style={styles.input} placeholder="License Key" placeholderTextColor="rgba(255,255,255,0.35)" value={licenseKey} onChangeText={setLicenseKey} autoCapitalize="characters" />
+              <View style={[styles.iconGlow, { shadowColor: ac }]}>
+                <CandleLogo size={72} color={ac} />
               </View>
+              <Text style={styles.appName}>EA NAPTUNE</Text>
+              <Text style={styles.tagline}>Algorithmic Trading Platform</Text>
+            </View>
+
+            {/* No card — the form sits directly on the gradient, as on login. */}
+            <View style={styles.formBlock}>
+              <Text style={styles.headingText}>Enter License Key</Text>
+
+              <FloatingField
+                testID="license-key"
+                label="License Key"
+                value={licenseKey}
+                onChangeText={setLicenseKey}
+                accentRgb={a}
+                autoCapitalize="characters"
+              />
+
               <TouchableOpacity
-                style={[styles.activateButton, isActivating && styles.activateButtonDisabled, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 50% at 30% 25%, rgba(255,255,255,0.15) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.15) 0%, rgba(' + a + ', 0.08) 50%, rgba(0,0,0,0.5) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.25), 0 8px 24px rgba(0,0,0,0.4), 0 0 20px rgba(' + a + ', 0.1)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', border: '1.5px solid rgba(' + a + ', 0.4)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2), 0 0 70px rgba(' + a + ', 0.1)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '2px solid ' + ac, boxShadow: '0 0 12px rgba(' + a + ', 0.35), 0 0 24px rgba(' + a + ', 0.2), 0 8px 20px rgba(0,0,0,0.5)' } : { background: 'rgba(16,16,18,0.97)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', border: '0.5px solid rgba(255,255,255,0.04)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 0 28px rgba(' + a + ', 0.35), 0 0 56px rgba(' + a + ', 0.15)' })]}
-                onPress={handleActivate} disabled={isActivating}>
+                style={[
+                  styles.activateButton,
+                  isActivating && styles.activateButtonDisabled,
+                  { backgroundColor: 'rgba(' + a + ', 0.85)', shadowColor: ac },
+                ]}
+                onPress={handleActivate}
+                disabled={isActivating}
+                activeOpacity={0.8}
+              >
                 {isActivating ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                    <ActivityIndicator size="small" color={ac} />
-                    <Text style={[styles.btnText, { marginLeft: 10 }]}>Activating...</Text>
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <Text style={[styles.btnText, { marginLeft: 8 }]}>Activating...</Text>
                   </View>
                 ) : (
                   <Text style={styles.btnText}>Activate EA</Text>
                 )}
               </TouchableOpacity>
+
               <Text style={styles.hint}>Enter your license key to activate EA</Text>
             </View>
+
+            <Text style={styles.footer}>Powered by EA NAPTUNE</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -144,25 +167,79 @@ const styles = StyleSheet.create({
     borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
   },
-  content: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 },
-  logoContainer: { alignItems: 'center', marginBottom: 60 },
-  title: { fontSize: 24, fontWeight: '700', color: '#FFFFFF', marginTop: 16, letterSpacing: -0.3 },
-  form: { width: '100%', maxWidth: 340 },
-  inputWrap: {
-    borderRadius: 18, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.15)',
-    backgroundColor: 'rgba(44, 44, 46, 0.6)', marginBottom: 16,
-    ...(Platform.OS !== 'web' && { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 4 }),
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 40,
   },
-  input: { paddingHorizontal: 18, paddingVertical: 16, fontSize: 16, color: '#FFFFFF', backgroundColor: 'transparent' },
+  logoContainer: { alignItems: 'center', marginBottom: 40 },
+  iconGlow: {
+    padding: 4,
+    borderRadius: 24,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  appName: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 16,
+    letterSpacing: 1.5,
+  },
+  tagline: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: 'rgba(255, 255, 255, 0.4)',
+    marginTop: 6,
+    letterSpacing: 0.8,
+  },
+  formBlock: { width: '100%', maxWidth: 360 },
+  headingText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 28,
+    letterSpacing: 0.3,
+    textAlign: 'center',
+  },
   activateButton: {
-    backgroundColor: 'rgba(44, 44, 46, 0.7)', paddingVertical: 18,
-    borderRadius: 18, marginTop: 8, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.15)',
-    ...(Platform.OS !== 'web' && { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 16, elevation: 6 }),
+    marginTop: 8,
+    borderRadius: 14,
+    paddingVertical: 16,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 8,
   },
   activateButtonDisabled: { opacity: 0.5 },
-  btnText: { color: '#FFFFFF', fontSize: 17, fontWeight: '600', textAlign: 'center', letterSpacing: -0.2 },
-  hint: { fontSize: 13, color: 'rgba(255,255,255,0.4)', textAlign: 'center', marginTop: 14 },
-  appIcon: { width: 80, height: 80, borderRadius: 18 },
+  btnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    letterSpacing: 0.5,
+  },
+  loadingContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  hint: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.35)',
+    textAlign: 'center',
+    marginTop: 14,
+  },
+  footer: {
+    marginTop: 32,
+    fontSize: 11,
+    fontWeight: '400',
+    color: 'rgba(255, 255, 255, 0.2)',
+    letterSpacing: 0.5,
+  },
   modalOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 32, zIndex: 9999,

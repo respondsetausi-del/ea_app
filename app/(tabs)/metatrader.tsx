@@ -531,9 +531,9 @@ export default function MetaTraderScreen() {
   const ac = thm.accent;
   const ag = thm.accentGlow;
   const isNeon = glassMode === 'neon';
-  const isLiquid = glassMode === 'liquid';
-  const isCmd = glassMode === 'commander';
-  const isMinimal = glassMode === 'minimal';
+  const isLiquid = false;
+  const isCmd = false;
+  const isMinimal = false;
   const primaryEA = eas.length > 0 ? eas.find((e: any) => e.isActive) || eas[0] : null;
   const primaryEAImage = (() => {
     if (!primaryEA || !primaryEA.userData || !primaryEA.userData.owner) return null;

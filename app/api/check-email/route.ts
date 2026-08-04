@@ -4,7 +4,6 @@ export async function POST(request: Request): Promise<Response> {
     try {
         const body = await request.json().catch(() => ({}));
         const email = (body?.email as string | undefined)?.trim().toLowerCase();
-        const mentor = (body?.mentor as string | undefined)?.toString().trim();
         const refCode = (body?.ref_code as string | undefined)?.toString().trim().toUpperCase();
         const deviceId = (body?.device_id as string | undefined)?.toString().trim();
 

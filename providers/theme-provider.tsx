@@ -3,7 +3,9 @@ import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type ThemeName = 'red' | 'blue' | 'green' | 'purple' | 'orange' | 'cyan';
-export type GlassMode = 'neon' | 'minimal' | 'liquid' | 'commander' | 'mech';
+// minimal / liquid / commander / mech were retired — they fought the neon
+// identity and every card style had to be written four times over.
+export type GlassMode = 'neon' | 'sectioned';
 export type FontFamily = 'system' | 'mono' | 'rounded' | 'condensed' | 'serif' | 'grotesk' | 'jetbrains' | 'outfit' | 'sora' | 'tight';
 export type HeroStyle = 'square' | 'circle';
 export type TextCase = 'normal' | 'upper' | 'lower' | 'capitalize';
@@ -43,14 +45,14 @@ const THEMES: Record<ThemeName, ThemeColors> = {
   cyan: { accent: '#06D6E0', accentRgb: '6, 214, 224', accentLight: '#A5F3FC', accentGlow: '#06D6E0', gradientStart: 'rgba(6, 214, 224,', textMuted: 'rgba(165, 243, 252, 0.6)' },
 };
 
-const THEME_STORAGE_KEY = 'tradeport_theme';
-const GLASS_STORAGE_KEY = 'tradeport_glass_mode';
-const FONT_STORAGE_KEY = 'tradeport_font';
-const HERO_STORAGE_KEY = 'tradeport_hero_style';
-const CASE_STORAGE_KEY = 'tradeport_text_case';
-const BG_STORAGE_KEY = 'tradeport_bg_type';
-const CARDBG_STORAGE_KEY = 'tradeport_card_bg';
-const SHAPE_STORAGE_KEY = 'tradeport_card_shape';
+const THEME_STORAGE_KEY = 'ea_naptune_theme';
+const GLASS_STORAGE_KEY = 'ea_naptune_glass_mode';
+const FONT_STORAGE_KEY = 'ea_naptune_font';
+const HERO_STORAGE_KEY = 'ea_naptune_hero_style';
+const CASE_STORAGE_KEY = 'ea_naptune_text_case';
+const BG_STORAGE_KEY = 'ea_naptune_bg_type';
+const CARDBG_STORAGE_KEY = 'ea_naptune_card_bg';
+const SHAPE_STORAGE_KEY = 'ea_naptune_card_shape';
 
 export interface ThemeState {
   themeName: ThemeName; theme: ThemeColors; setThemeName: (name: ThemeName) => void;
@@ -65,17 +67,24 @@ export interface ThemeState {
 
 export const [ThemeProvider, useTheme] = createContextHook<ThemeState>(() => {
   const [themeName, setThemeNameState] = useState<ThemeName>('blue');
-  const [glassMode, setGlassModeState] = useState<GlassMode>('commander');
+  const [glassMode, setGlassModeState] = useState<GlassMode>('neon');
   const [fontFamily, setFontFamilyState] = useState<FontFamily>('system');
   const [heroStyle, setHeroStyleState] = useState<HeroStyle>('circle');
   const [textCase, setTextCaseState] = useState<TextCase>('normal');
   const [bgType, setBgTypeState] = useState<BgType>('robot');
   const [cardBgMode, setCardBgModeState] = useState<CardBgMode>('thumbnail');
-  const [cardShape, setCardShapeState] = useState<CardShape>('rounded');
+  // Superpill by default — the true capsule signed off on in the card-style
+  // review. 'pill' is the softer rounded-rect step below it.
+  const [cardShape, setCardShapeState] = useState<CardShape>('superpill');
 
   useEffect(() => {
     AsyncStorage.getItem(THEME_STORAGE_KEY).then((s) => { if (s && s in THEMES) setThemeNameState(s as ThemeName); }).catch(() => {});
-    AsyncStorage.getItem(GLASS_STORAGE_KEY).then((s) => { if (s === 'neon' || s === 'minimal' || s === 'liquid' || s === 'commander' || s === 'mech') setGlassModeState(s); }).catch(() => {});
+    // Anyone still stored on a retired mode falls back to neon rather than
+    // being left on a style the app no longer renders.
+    AsyncStorage.getItem(GLASS_STORAGE_KEY).then((s) => {
+      if (s === 'neon' || s === 'sectioned') setGlassModeState(s);
+      else if (s) { setGlassModeState('neon'); AsyncStorage.setItem(GLASS_STORAGE_KEY, 'neon').catch(() => {}); }
+    }).catch(() => {});
     AsyncStorage.getItem(FONT_STORAGE_KEY).then((s) => { if (s && s in FONT_MAP) setFontFamilyState(s as FontFamily); }).catch(() => {});
     AsyncStorage.getItem(HERO_STORAGE_KEY).then((s) => { if (s === 'square' || s === 'circle') setHeroStyleState(s); }).catch(() => {});
     AsyncStorage.getItem(CASE_STORAGE_KEY).then((s) => { if (s && s in TEXT_CASE_MAP) setTextCaseState(s as TextCase); }).catch(() => {});

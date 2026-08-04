@@ -19,11 +19,9 @@ export default function PaidScreen() {
       try {
         const raw = await AsyncStorage.getItem('pendingBuy');
         if (raw) {
-          const { email, mentorId } = JSON.parse(raw);
-          // Auto-register the paid user under the mentor's EA.
-          try { await apiService.registerUser(email, mentorId); } catch {}
+          const { email } = JSON.parse(raw);
           await AsyncStorage.setItem('emailAuthenticated', 'true');
-          setUser({ mentorId, email });
+          setUser({ email });
           await AsyncStorage.removeItem('pendingBuy');
         }
       } catch {}

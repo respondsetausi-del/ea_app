@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: tradeport-ea-web
+    name: ea-naptune-web
     env: docker
     plan: free
     autoDeploy: true
