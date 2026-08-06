@@ -1,24 +1,51 @@
-// Server-side batch engine (SERVER ONLY). Start → open a batch → hold the
-// interval → close all → flip direction → reopen, looping. Runs on the Bun
-// server so it keeps going while the app is backgrounded/closed.
+// Server-side batch engine (SERVER ONLY). Runs on the Bun server so it keeps
+// trading while the app is backgrounded or closed.
+//
+// Two strategies:
+//
+//   'ma-cross'  Every cycle, each symbol's direction is read from an EMA
+//               crossover on its own price history, and the book is reconciled
+//               to match. This is the default.
+//
+//   'flip'      The original behaviour: pick a random direction, hold the
+//               interval, then flip. Kept because it's what existing persisted
+//               flights were started with, but it has no edge — it pays the
+//               spread on every flip in exchange for a coin toss.
 //
 // Hardened for reboots: each flight is persisted to MySQL and resumeBatches()
-// reloads active flights on server startup and continues the loop. Keep-alive
-// self-pings /health to reduce free-tier sleep (an external uptime pinger is
-// still the dependable anti-sleep on free tier).
-import { orderSend, orderClose, getOpenOrders } from '@/services/api2trade';
+// reloads active flights on startup. Keep-alive self-pings /health to reduce
+// free-tier sleep (an external uptime pinger is still the dependable fix).
+import { orderSend, orderClose, getOpenOrders, getPriceHistory, normalizeVolume } from '@/services/api2trade';
+import { crossSignal, extractCloses, type Direction } from '@/utils/moving-average';
+import { ensureLive, withSession } from '@/app/api/mt5/session-keeper';
+import { checkSessionEntitlement } from '@/app/api/mt5/entitlement';
 import { getPool } from '@/app/api/_db';
 
-type Leg = 'Buy' | 'Sell';
+type Strategy = 'ma-cross' | 'flip';
+
+interface Position {
+  dir: Direction | null;
+  tickets: number[];
+  /** Why the engine last did (or didn't) do something with this symbol. */
+  note: string;
+}
+
+/** Per-symbol overrides, so a symbol keeps the lot it was given in Trade Config. */
+type PerSymbol = Record<string, { volume?: number; count?: number }>;
 
 interface Flight {
-  symbol: string;
+  symbols: string[];
   volume: number;
   count: number;
+  perSymbol: PerSymbol;
   intervalMs: number;
   comment: string;
-  dir: Leg;
-  tickets: number[];
+  strategy: Strategy;
+  timeframe: string;
+  fastPeriod: number;
+  slowPeriod: number;
+  minSeparationPct: number;
+  positions: Record<string, Position>;
   timer: ReturnType<typeof setTimeout> | null;
   active: boolean;
   status: string;
@@ -57,8 +84,10 @@ function persist(id: string, f: Flight): void {
       await ensureTable();
       const pool = await getPool();
       const data = JSON.stringify({
-        symbol: f.symbol, volume: f.volume, count: f.count, intervalMs: f.intervalMs,
-        comment: f.comment, dir: f.dir, tickets: f.tickets, nextFlipAt: f.nextFlipAt,
+        symbols: f.symbols, volume: f.volume, count: f.count, perSymbol: f.perSymbol, intervalMs: f.intervalMs,
+        comment: f.comment, strategy: f.strategy, timeframe: f.timeframe,
+        fastPeriod: f.fastPeriod, slowPeriod: f.slowPeriod, minSeparationPct: f.minSeparationPct,
+        positions: f.positions, nextFlipAt: f.nextFlipAt,
         legCount: f.legCount, startedAt: f.startedAt,
       });
       await pool.query(
@@ -91,77 +120,231 @@ function maybeStopKeepAlive(): void {
   if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
 }
 
-// ── Trading primitives (all concurrent) ──
-async function openBatch(id: string, f: Flight): Promise<void> {
-  const dir = f.dir;
+function pos(f: Flight, symbol: string): Position {
+  if (!f.positions[symbol]) f.positions[symbol] = { dir: null, tickets: [], note: '' };
+  return f.positions[symbol];
+}
+
+// ── Trading primitives ──
+
+/** The lot and trade count this symbol should use. */
+function sizing(f: Flight, symbol: string): { volume: number; count: number } {
+  const o = f.perSymbol?.[symbol] || {};
+  return {
+    volume: Number(o.volume) > 0 ? Number(o.volume) : f.volume,
+    count: Math.max(1, Number(o.count) > 0 ? Number(o.count) : f.count),
+  };
+}
+
+/** Open the symbol's configured number of orders, keeping only ones that ticketed. */
+async function openLeg(id: string, f: Flight, symbol: string, dir: Direction): Promise<void> {
+  const { volume: requested, count } = sizing(f, symbol);
+  // Clamp to the broker's min/step here: the engine calls Api2Trade directly
+  // rather than going through the trade route.
+  const volume = await normalizeVolume(id, symbol, requested);
   const results: any[] = await Promise.all(
-    Array.from({ length: f.count }, () =>
-      orderSend({ id, symbol: f.symbol, operation: dir, volume: f.volume, comment: f.comment })
-        .catch((e: any) => { console.error(`[Batch:srv] ${id} open error:`, e?.message || e); return null; }),
+    Array.from({ length: count }, () =>
+      withSession(id, () => orderSend({ id, symbol, operation: dir, volume, comment: f.comment }))
+        .catch((e: any) => { console.error(`[Batch:srv] ${id} ${symbol} open error:`, e?.message || e); return null; }),
     ),
   );
-  f.tickets = [];
+
+  const p = pos(f, symbol);
+  p.tickets = [];
   for (const o of results) {
-    if (o && typeof o.ticket === 'number' && o.ticket > 0) f.tickets.push(o.ticket);
-    else if (o) f.status = `Broker rejected ${dir} ${f.symbol}: ${o?.error || o?.message || 'no ticket'}`;
+    // OrderSend answers 200 even on rejection — a ticket is the only proof.
+    if (o && typeof o.ticket === 'number' && o.ticket > 0) p.tickets.push(o.ticket);
   }
-  console.log(`[Batch:srv] ${id} opened ${f.tickets.length}/${f.count} ${dir} ${f.symbol}`);
+  p.dir = p.tickets.length > 0 ? dir : null;
+  p.note = p.tickets.length === count
+    ? `${dir} x${p.tickets.length} @ ${volume}`
+    : `${dir} ${p.tickets.length}/${count} filled @ ${volume}`;
+  console.log(`[Batch:srv] ${id} ${symbol} opened ${p.tickets.length}/${count} ${dir} @ ${volume}`);
 }
 
-async function closeBatch(id: string, f: Flight): Promise<void> {
-  const toClose = [...f.tickets];
-  f.tickets = [];
-  await Promise.all(toClose.map((t) =>
-    orderClose({ id, ticket: t, lots: f.volume })
-      .then(() => console.log(`[Batch:srv] ${id} closed ${t}`))
-      .catch((e: any) => console.error(`[Batch:srv] ${id} close error:`, e?.message || e)),
-  ));
-}
-
-// Close any positions already open on this symbol so a flight starts flat.
-async function cleanSymbol(id: string, symbol: string): Promise<void> {
+/**
+ * Flatten a symbol completely.
+ *
+ * Closes by live ticket list from the broker, not just the ones we opened:
+ * a position we lost track of (restart, partial fill, manual trade) would
+ * otherwise sit there and hedge the new leg. Close-before-open only works if
+ * "close" really means everything on that symbol.
+ */
+async function flatten(id: string, f: Flight, symbol: string): Promise<void> {
+  const p = pos(f, symbol);
   try {
-    const open = await getOpenOrders(id);
-    if (!Array.isArray(open)) return;
-    const mine = open.filter((o: any) => o?.symbol === symbol && o?.ticket);
-    if (mine.length === 0) return;
-    await Promise.all(mine.map((o: any) => orderClose({ id, ticket: o.ticket, lots: o.lots }).catch(() => {})));
-  } catch (e: any) { console.error(`[Batch:srv] ${id} cleanSymbol error:`, e?.message || e); }
+    const open = await withSession(id, () => getOpenOrders(id));
+    const mine = Array.isArray(open) ? open.filter((o: any) => o?.symbol === symbol && o?.ticket) : [];
+    await Promise.all(mine.map((o: any) =>
+      // OrderClose needs the volume or the position doesn't close.
+      withSession(id, () => orderClose({ id, ticket: o.ticket, lots: o.lots ?? sizing(f, symbol).volume }))
+        .catch((e: any) => console.error(`[Batch:srv] ${id} ${symbol} close error:`, e?.message || e)),
+    ));
+  } catch (e: any) {
+    console.error(`[Batch:srv] ${id} ${symbol} flatten error:`, e?.message || e);
+    // Fall back to the tickets we know about.
+    await Promise.all(p.tickets.map((t) =>
+      orderClose({ id, ticket: t, lots: sizing(f, symbol).volume }).catch(() => {}),
+    ));
+  }
+  p.tickets = [];
+  p.dir = null;
 }
 
-function scheduleFlip(id: string, f: Flight, delayMs: number): void {
-  f.timer = setTimeout(async () => {
-    const ff = flights.get(id);
-    if (!ff || !ff.active) return;
-    await closeBatch(id, ff);
-    ff.dir = ff.dir === 'Buy' ? 'Sell' : 'Buy'; // flip each cycle
-    cycle(id);
-  }, Math.max(0, delayMs));
+// ── Strategy: EMA crossover ──
+
+/** Read one symbol's target direction from its price history. */
+async function targetDirection(id: string, f: Flight, symbol: string): Promise<{ dir: Direction | null; reason: string }> {
+  try {
+    const payload = await withSession(id, () => getPriceHistory(id, symbol, f.timeframe));
+    const closes = extractCloses(payload);
+    if (closes.length === 0) {
+      // Worth shouting about: the payload shape varies by server build, and a
+      // silent empty series would look exactly like a flat market.
+      console.error(`[Batch:srv] ${id} ${symbol} price history yielded no closes; payload keys:`,
+        payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 8) : typeof payload);
+      return { dir: null, reason: 'no price history' };
+    }
+    const sig = crossSignal(closes, {
+      fastPeriod: f.fastPeriod,
+      slowPeriod: f.slowPeriod,
+      minSeparationPct: f.minSeparationPct,
+    });
+    return { dir: sig.direction, reason: sig.reason };
+  } catch (e: any) {
+    return { dir: null, reason: `history failed: ${e?.message || e}` };
+  }
 }
+
+/**
+ * Bring one symbol's book in line with its signal.
+ *
+ * No direction means hold — not flatten. An indecisive reading is not a
+ * reason to pay the spread closing a position we'd likely reopen next cycle.
+ */
+async function reconcile(id: string, f: Flight, symbol: string): Promise<void> {
+  const p = pos(f, symbol);
+  const { dir, reason } = await targetDirection(id, f, symbol);
+
+  if (!dir) {
+    p.note = `hold — ${reason}`;
+    return;
+  }
+  if (p.dir === dir && p.tickets.length > 0) {
+    p.note = `holding ${dir} x${p.tickets.length} — ${reason}`;
+    return;
+  }
+
+  // Close-before-open: never let the new leg hedge the old one.
+  await flatten(id, f, symbol);
+  await openLeg(id, f, symbol, dir);
+  p.note = `${p.note} — ${reason}`;
+}
+
+// ── Cycle ──
 
 async function cycle(id: string): Promise<void> {
   const f = flights.get(id);
   if (!f || !f.active) return;
-  await openBatch(id, f);
+
+  // Access check first — before spending anything on the broker. The app can't
+  // enforce the 30-day window here because the app isn't running; this loop is,
+  // and the session keeper will happily keep its connection alive forever.
+  const entitlement = await checkSessionEntitlement(id);
+  if (!entitlement.allowed) {
+    console.warn(`[Batch:srv] ${id} stopping — ${entitlement.reason}`);
+    f.status = `stopped — ${entitlement.reason}`;
+    // Close out rather than abandoning open positions to a user who can no
+    // longer see or manage them from the app.
+    await stopBatch(id, true).catch(() => {});
+    return;
+  }
+
+  // Repair the connection once, before fanning out over the symbols. Without
+  // this each symbol would discover the death separately and the first cycle
+  // after a drop would be wasted.
+  const live = await ensureLive(id).catch(() => false);
+  if (!live) {
+    f.status = 'MT5 session down — retrying next cycle';
+    for (const s of f.symbols) pos(f, s).note = 'waiting for MT5 session';
+    console.warn(`[Batch:srv] ${id} session not live — skipping cycle`);
+    f.nextFlipAt = Date.now() + f.intervalMs;
+    persist(id, f);
+    schedule(id, f, f.intervalMs);
+    return;
+  }
+
+  if (f.strategy === 'ma-cross') {
+    // Symbols are independent; one bad history call shouldn't stall the rest.
+    await Promise.all(f.symbols.map((s) => reconcile(id, f, s).catch((e: any) => {
+      console.error(`[Batch:srv] ${id} ${s} reconcile error:`, e?.message || e);
+      pos(f, s).note = `error: ${e?.message || e}`;
+    })));
+    const live = f.symbols.filter((s) => pos(f, s).tickets.length > 0).length;
+    f.status = `EMA${f.fastPeriod}/${f.slowPeriod} ${f.timeframe} — ${live}/${f.symbols.length} symbols in position`;
+  } else {
+    // Legacy flip: one direction for the whole batch, reversed each cycle.
+    for (const s of f.symbols) {
+      const p = pos(f, s);
+      const next: Direction = p.dir === 'Buy' ? 'Sell' : 'Buy';
+      await flatten(id, f, s);
+      await openLeg(id, f, s, next);
+    }
+    f.status = `flip — ${f.symbols.length} symbol(s)`;
+  }
+
   f.legCount += 1;
   f.nextFlipAt = Date.now() + f.intervalMs;
-  f.status = `${f.dir} ${f.symbol} x${f.tickets.length} — flips in ${Math.round(f.intervalMs / 60000)}m`;
   persist(id, f);
-  scheduleFlip(id, f, f.intervalMs);
+  schedule(id, f, f.intervalMs);
+}
+
+function schedule(id: string, f: Flight, delayMs: number): void {
+  f.timer = setTimeout(() => {
+    const ff = flights.get(id);
+    if (!ff || !ff.active) return;
+    cycle(id);
+  }, Math.max(0, delayMs));
 }
 
 // ── Public API ──
-export function startBatch(params: { id: string; symbol: string; volume: number; count: number; intervalMs: number; comment?: string }) {
+
+export interface StartParams {
+  id: string;
+  /** One or more broker symbols, exact casing. */
+  symbols: string[];
+  volume: number;
+  count: number;
+  perSymbol?: PerSymbol;
+  intervalMs: number;
+  comment?: string;
+  strategy?: Strategy;
+  timeframe?: string;
+  fastPeriod?: number;
+  slowPeriod?: number;
+  minSeparationPct?: number;
+}
+
+export function startBatch(params: StartParams) {
   const { id } = params;
   stopBatch(id, true).catch(() => {});
+
+  const symbols = (params.symbols || []).map((s) => String(s).trim()).filter(Boolean);
+  if (symbols.length === 0) return { ok: false, running: false, error: 'no symbols' };
+
   const f: Flight = {
-    symbol: params.symbol,
+    symbols,
     volume: params.volume || 0.01,
     count: Math.max(1, params.count || 1),
+    perSymbol: params.perSymbol || {},
     intervalMs: Math.max(5000, params.intervalMs || 600000),
     comment: (params.comment || '').slice(0, 31),
-    dir: Math.random() < 0.5 ? 'Buy' : 'Sell', // random first side; flips each cycle
-    tickets: [],
+    strategy: params.strategy === 'flip' ? 'flip' : 'ma-cross',
+    timeframe: params.timeframe || 'M15',
+    fastPeriod: Math.max(2, params.fastPeriod || 20),
+    slowPeriod: Math.max(3, params.slowPeriod || 50),
+    minSeparationPct: params.minSeparationPct ?? 0.02,
+    positions: {},
     timer: null,
     active: true,
     status: 'Starting…',
@@ -171,12 +354,15 @@ export function startBatch(params: { id: string; symbol: string; volume: number;
   };
   flights.set(id, f);
   ensureKeepAlive();
-  console.log(`[Batch:srv] START ${id} — ${f.symbol} x${f.count} @ ${f.volume}, flip every ${Math.round(f.intervalMs / 60000)}m`);
+  console.log(`[Batch:srv] START ${id} — ${f.strategy} ${symbols.join(', ')} x${f.count} @ ${f.volume}, every ${Math.round(f.intervalMs / 60000)}m`);
+
   (async () => {
-    await cleanSymbol(id, f.symbol);
+    // Start flat so the first signal isn't fighting a leftover position.
+    await Promise.all(symbols.map((s) => flatten(id, f, s).catch(() => {})));
     if (flights.get(id) === f && f.active) cycle(id);
   })();
-  return { ok: true, running: true };
+
+  return { ok: true, running: true, symbols };
 }
 
 export async function stopBatch(id: string, closeOpen = true) {
@@ -184,12 +370,8 @@ export async function stopBatch(id: string, closeOpen = true) {
   if (!f) { unpersist(id); return { ok: true, wasRunning: false }; }
   f.active = false;
   if (f.timer) { clearTimeout(f.timer); f.timer = null; }
-  if (closeOpen && f.tickets.length) {
-    await Promise.all(f.tickets.map((t) =>
-      orderClose({ id, ticket: t, lots: f.volume })
-        .then(() => console.log(`[Batch:srv] ${id} closed ${t} on stop`))
-        .catch((e: any) => console.error(`[Batch:srv] ${id} stop-close error:`, e?.message || e)),
-    ));
+  if (closeOpen) {
+    await Promise.all(f.symbols.map((s) => flatten(id, f, s).catch(() => {})));
   }
   flights.delete(id);
   unpersist(id);
@@ -203,15 +385,21 @@ export function getStatus(id: string) {
   if (!f || !f.active) return { running: false };
   return {
     running: true,
-    symbol: f.symbol,
+    strategy: f.strategy,
+    symbols: f.symbols,
+    timeframe: f.timeframe,
+    fastPeriod: f.fastPeriod,
+    slowPeriod: f.slowPeriod,
     volume: f.volume,
     count: f.count,
-    dir: f.dir,
-    openTickets: f.tickets.length,
     status: f.status,
     legCount: f.legCount,
     intervalMs: f.intervalMs,
     msToFlip: Math.max(0, f.nextFlipAt - Date.now()),
+    positions: f.symbols.map((s) => {
+      const p = pos(f, s);
+      return { symbol: s, dir: p.dir, openTickets: p.tickets.length, note: p.note };
+    }),
   };
 }
 
@@ -228,14 +416,27 @@ export async function resumeBatches(): Promise<void> {
       if (flights.has(id)) continue;
       let c: any;
       try { c = JSON.parse(row.data); } catch { continue; }
+
+      // Flights persisted before multi-symbol stored a single `symbol`.
+      const symbols: string[] = Array.isArray(c.symbols) && c.symbols.length
+        ? c.symbols
+        : (c.symbol ? [c.symbol] : []);
+      if (symbols.length === 0) continue;
+
       const f: Flight = {
-        symbol: c.symbol,
+        symbols,
         volume: c.volume || 0.01,
         count: Math.max(1, c.count || 1),
+        perSymbol: (c.perSymbol && typeof c.perSymbol === 'object') ? c.perSymbol : {},
         intervalMs: Math.max(5000, c.intervalMs || 600000),
         comment: c.comment || '',
-        dir: c.dir === 'Sell' ? 'Sell' : 'Buy',
-        tickets: Array.isArray(c.tickets) ? c.tickets : [],
+        strategy: c.strategy === 'flip' ? 'flip' : (c.strategy === 'ma-cross' ? 'ma-cross' : 'flip'),
+        timeframe: c.timeframe || 'M15',
+        fastPeriod: Math.max(2, c.fastPeriod || 20),
+        slowPeriod: Math.max(3, c.slowPeriod || 50),
+        minSeparationPct: c.minSeparationPct ?? 0.02,
+        positions: (c.positions && typeof c.positions === 'object') ? c.positions
+          : (c.dir && c.tickets ? { [symbols[0]]: { dir: c.dir, tickets: c.tickets, note: 'resumed' } } : {}),
         timer: null,
         active: true,
         status: 'Resumed',
@@ -244,10 +445,9 @@ export async function resumeBatches(): Promise<void> {
         nextFlipAt: Number(c.nextFlipAt) || Date.now(),
       };
       flights.set(id, f);
-      console.log(`[Batch:srv] RESUME ${id} — ${f.symbol} x${f.count} flip every ${Math.round(f.intervalMs / 60000)}m (due in ${Math.round((f.nextFlipAt - Date.now()) / 1000)}s)`);
+      console.log(`[Batch:srv] RESUME ${id} — ${f.strategy} ${symbols.join(', ')} (due in ${Math.round((f.nextFlipAt - Date.now()) / 1000)}s)`);
       ensureKeepAlive();
-      // Continue the loop: fire the next flip after the remaining hold (or now if overdue).
-      scheduleFlip(id, f, f.nextFlipAt - Date.now());
+      schedule(id, f, f.nextFlipAt - Date.now());
     }
   } catch (e: any) {
     console.error('[Batch:srv] resumeBatches error:', e?.message || e);

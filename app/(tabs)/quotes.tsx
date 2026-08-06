@@ -5,7 +5,8 @@ import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
-import { SURFACE, TEXT, RADIUS, GROUP_LABEL } from '@/constants/surface';
+import { CONTENT_MAX_WIDTH, GROUP_LABEL, INK, SIGNAL, radii, screenWash, shapePadding, webPressable } from '@/constants/neon';
+import { NeonCard } from '@/components/neon-card';
 import { PageBackground } from '@/components/page-background';
 import { Symbol as ApiSymbol, apiService } from '@/services/api';
 
@@ -19,28 +20,25 @@ interface Quote {
 
 
 
-const mockQuotes: Quote[] = [
-  { symbol: 'EURUSD', lotSize: 0.1, platform: 'MT5', direction: 'BUY' },
-  { symbol: 'GBPUSD', lotSize: 0.2, platform: 'MT4', direction: 'SELL' },
-  { symbol: 'USDJPY', lotSize: 0.15, platform: 'MT5', direction: 'BUY' },
-  { symbol: 'AUDUSD', lotSize: 0.1, platform: 'MT5', direction: 'BUY' },
-  { symbol: 'USDCAD', lotSize: 0.25, platform: 'MT4', direction: 'SELL' },
-  { symbol: 'NZDUSD', lotSize: 0.1, platform: 'MT5', direction: 'BUY' },
-  { symbol: 'USDCHF', lotSize: 0.2, platform: 'MT4', direction: 'SELL' },
-  { symbol: 'EURGBP', lotSize: 0.1, platform: 'MT5', direction: 'BUY' },
-  { symbol: 'EURJPY', lotSize: 0.15, platform: 'MT5', direction: 'BUY' },
-  { symbol: 'GBPJPY', lotSize: 0.2, platform: 'MT4', direction: 'SELL' },
-];
+/**
+ * Symbols come from the connected MT5 account and nowhere else.
+ *
+ * This screen used to fall back to a hardcoded list (EURUSD, XAUUSD, …) when
+ * no account was connected. That was worse than showing nothing: broker
+ * symbols carry exact casing and suffixes — the real instrument is
+ * `XAUUSD.mic`, not `XAUUSD` — so configuring a made-up symbol produced trades
+ * the broker rejects, with no error anywhere the user could see. If there's no
+ * account, the screen now says so.
+ */
 
 export default function QuotesScreen() {
   const { eas, activeSymbols, mt4Symbols, mt5Symbols, mt5Account, ensureMT5Connected } = useApp();
-  const { theme: thm, glassMode } = useTheme();
+  const { theme: thm, cardShape } = useTheme();
   const a = thm.accentRgb;
   const ac = thm.accent;
-  const isNeon = glassMode === 'neon';
-  const isLiquid = false;
-  const isCmd = false;
   const cc = ac;
+  const R = radii(cardShape);
+  const padH = shapePadding(cardShape);
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [apiSymbols, setApiSymbols] = useState<ApiSymbol[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -57,7 +55,7 @@ export default function QuotesScreen() {
     return 'https://tradeportea.com/admin/uploads/' + raw.replace(/^\/+/, '');
   })();
   const hasActiveQuotes = activeSymbols.length > 0 || mt4Symbols.length > 0 || mt5Symbols.length > 0;
-  const hasConnectedEA = primaryEA && primaryEA.status === 'connected' && primaryEA.phoneSecretKey;
+  const mt5Connected = !!(mt5Account?.uuid && mt5Account.connected);
 
   // Merge quotes with active symbol status
   const quotesWithActiveStatus = quotes.map(quote => ({
@@ -67,7 +65,7 @@ export default function QuotesScreen() {
       mt5Symbols.some(mt5Symbol => mt5Symbol.symbol === quote.symbol)
   }));
 
-  // Fetch symbols from API when connected; fallback to mock offline
+  // Pull the broker's symbol universe from the connected MT5 account.
   const fetchSymbols = useCallback(async (showRefreshIndicator = false) => {
     try {
       if (showRefreshIndicator) {
@@ -77,45 +75,25 @@ export default function QuotesScreen() {
       }
       setError(null);
 
-      // Prefer the connected MT5 account's real broker symbols (Api2Trade pull).
-      if (mt5Account?.uuid && mt5Account.connected) {
-        // Probe, reconnect, retry once — a stale UUID otherwise fails silently.
-        let list: string[];
-        try {
-          list = await apiService.getMT5Symbols(mt5Account.uuid);
-        } catch (fetchError) {
-          const fresh = await ensureMT5Connected();
-          if (!fresh) throw fetchError;
-          list = await apiService.getMT5Symbols(fresh);
-        }
-        const syms = Array.isArray(list) ? list : [];
-        setApiSymbols(syms.map((s) => ({ id: s, name: s })));
-        setQuotes(syms.map((symbolName) => {
-          const mt5Config = mt5Symbols.find((s) => s.symbol === symbolName);
-          const lot = mt5Config ? (Number.parseFloat(mt5Config.lotSize ?? '0.01') || 0.01) : 0.01;
-          return { symbol: symbolName, lotSize: lot, platform: 'MT5' as const, direction: (mt5Config?.direction ?? 'BUY') as 'BUY' | 'SELL' | 'BOTH' };
-        }));
+      // No account, no symbols — the empty state points at MetaTrader.
+      if (!mt5Account?.uuid || !mt5Account.connected) {
+        setApiSymbols([]);
+        setQuotes([]);
         return;
       }
 
-      // If we have a connected EA with phone secret, fetch from API
-      let response: { data: ApiSymbol[] } = { data: [] };
-      if (hasConnectedEA && primaryEA?.phoneSecretKey) {
-        const apiRes = await apiService.getSymbols(primaryEA.phoneSecretKey);
-        if (apiRes.message === 'accept' && Array.isArray(apiRes.data)) {
-          response = { data: apiRes.data };
-        }
-      }
-      // Fallback mock if API not available or no connected EA
-      if (response.data.length === 0) {
-        response.data = [
-          { id: '1', name: 'EURUSD' },
-          { id: '2', name: 'GBPUSD' },
-          { id: '3', name: 'XAUUSD' },
-          { id: '4', name: 'USDJPY' },
-        ];
+      // Probe, reconnect, retry once — a stale UUID otherwise fails silently.
+      let list: string[];
+      try {
+        list = await apiService.getMT5Symbols(mt5Account.uuid);
+      } catch (fetchError) {
+        const fresh = await ensureMT5Connected();
+        if (!fresh) throw fetchError;
+        list = await apiService.getMT5Symbols(fresh);
       }
 
+      const syms = Array.isArray(list) ? list : [];
+      const response: { data: ApiSymbol[] } = { data: syms.map((s) => ({ id: s, name: s })) };
       setApiSymbols(response.data);
       // Convert API symbols to quotes with actual saved data or defaults
       const newQuotes: Quote[] = response.data.map(apiSymbol => {
@@ -169,13 +147,10 @@ export default function QuotesScreen() {
       setQuotes(newQuotes);
     } catch (error) {
       console.error('Error fetching symbols:', error);
-      setError('Failed to load symbols (offline)');
-
-      // Fallback to mock data if API fails
-      if (quotes.length === 0) {
-        console.log('Using fallback mock data');
-        setQuotes(mockQuotes);
-      }
+      // Surface the real reason. Standing in fabricated symbols here is what
+      // produced silently-rejected trades before.
+      const detail = error instanceof Error ? error.message : '';
+      setError(detail ? `Couldn't reach your MT5 account — ${detail}` : "Couldn't reach your MT5 account");
     } finally {
       // Add a small delay to make the refresh feel more natural
       setTimeout(() => {
@@ -183,16 +158,10 @@ export default function QuotesScreen() {
         setRefreshing(false);
       }, showRefreshIndicator ? 300 : 0);
     }
-  }, [activeSymbols, mt4Symbols, mt5Symbols, quotes.length, mt5Account?.uuid, mt5Account?.connected, ensureMT5Connected]);
+  }, [activeSymbols, mt4Symbols, mt5Symbols, mt5Account?.uuid, mt5Account?.connected, ensureMT5Connected]);
 
-  // Initial load and refresh when symbols change
+  // Reload when the MT5 connection changes or a symbol config is saved.
   useEffect(() => {
-    console.log('Symbols changed, refreshing quotes...', {
-      activeSymbols: activeSymbols.length,
-      mt4Symbols: mt4Symbols.length,
-      mt5Symbols: mt5Symbols.length
-    });
-
     // Only do a full refresh if we don't have quotes yet, otherwise do a gentle refresh
     if (quotes.length === 0) {
       fetchSymbols(false);
@@ -200,7 +169,8 @@ export default function QuotesScreen() {
       // Gentle refresh to update the active status without disrupting the UI
       fetchSymbols(true);
     }
-  }, [hasConnectedEA, primaryEA?.phoneSecretKey, activeSymbols.length, mt4Symbols.length, mt5Symbols.length, quotes.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mt5Account?.uuid, mt5Account?.connected, activeSymbols.length, mt4Symbols.length, mt5Symbols.length]);
 
   // Smooth rotation animation for refresh button
   useEffect(() => {
@@ -265,38 +235,51 @@ export default function QuotesScreen() {
     router.push(`/trade-config?symbol=${symbol}`);
   };
 
+  const activeCount = quotesWithActiveStatus.filter(q => q.isActive).length;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, Platform.OS === 'web' && ({ backgroundImage: screenWash(a) } as any)]}>
       <PageBackground eaImage={primaryEAImage} />
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-          <ArrowLeft color="#FFFFFF" size={24} />
-        </TouchableOpacity>
 
-        <View style={styles.headerContent}>
-          <View style={styles.titleContainer}>
-            <Text style={[styles.headerTitle, { color: cc }]}>QUOTES</Text>
-            {primaryEA && (
-              <View style={styles.statusContainer}>
-                <Circle color={hasActiveQuotes ? '#00FF00' : '#666666'} fill={hasActiveQuotes ? '#00FF00' : 'transparent'} size={8} />
-                <Text style={[styles.statusText, { color: hasActiveQuotes ? '#00FF00' : '#666666' }]}>
-                  {hasActiveQuotes ? 'ACTIVE' : 'INACTIVE'}
-                </Text>
-              </View>
-            )}
-          </View>
-          {primaryEA && <Text style={styles.botName} numberOfLines={2} ellipsizeMode="tail">{primaryEA.name}</Text>}
-          {apiSymbols.length > 0 && <Text style={styles.symbolCount}>{apiSymbols.length} symbols available</Text>}
-        </View>
-
-        {hasConnectedEA && (
-          <TouchableOpacity style={[styles.refreshButton, refreshing && styles.refreshButtonDisabled]} onPress={handleRefresh} disabled={refreshing} activeOpacity={refreshing ? 1 : 0.7}>
-            <Animated.View style={{ transform: [{ rotate: rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }}>
-              <RefreshCw color={refreshing ? '#666666' : '#FFFFFF'} size={20} />
-            </Animated.View>
+      {/* Header — the accent title and status dot mirror home's hero caption. */}
+      <View style={styles.headerOuter}>
+        <View style={styles.header}>
+          <TouchableOpacity style={[styles.backButton, webPressable]} onPress={handleBack} activeOpacity={0.7}>
+            <ArrowLeft color="rgba(255,255,255,0.8)" size={20} />
           </TouchableOpacity>
-        )}
+
+          <View style={styles.headerContent}>
+            <View style={styles.titleContainer}>
+              <Text style={[styles.headerTitle, { color: cc }]}>QUOTES</Text>
+              {primaryEA && (
+                <View style={styles.statusContainer}>
+                  <Circle
+                    color={hasActiveQuotes ? SIGNAL.live : INK.ghost}
+                    fill={hasActiveQuotes ? SIGNAL.live : 'transparent'}
+                    size={7}
+                  />
+                  <Text style={[styles.statusText, { color: hasActiveQuotes ? SIGNAL.live : INK.ghost }]}>
+                    {hasActiveQuotes ? 'ACTIVE' : 'INACTIVE'}
+                  </Text>
+                </View>
+              )}
+            </View>
+            {primaryEA && <Text style={styles.botName} numberOfLines={1} ellipsizeMode="tail">{primaryEA.name}</Text>}
+          </View>
+
+          {mt5Connected && (
+            <TouchableOpacity
+              style={[styles.refreshButton, webPressable, refreshing && styles.refreshButtonDisabled]}
+              onPress={handleRefresh}
+              disabled={refreshing}
+              activeOpacity={refreshing ? 1 : 0.7}
+            >
+              <Animated.View style={{ transform: [{ rotate: rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }}>
+                <RefreshCw color={refreshing ? INK.ghost : 'rgba(255,255,255,0.8)'} size={18} />
+              </Animated.View>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Content */}
@@ -304,59 +287,96 @@ export default function QuotesScreen() {
         {loading && !refreshing ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator testID="quotes-loading" size="large" color={cc} />
-            <Text style={styles.loadingText}>Loading symbols...</Text>
+            <Text style={styles.loadingText}>Loading symbols…</Text>
           </View>
         ) : error ? (
           <View style={styles.errorContainer}>
             <Text style={styles.errorText}>{error}</Text>
-            {hasConnectedEA ? (
-              <TouchableOpacity style={[styles.retryButton, Platform.OS === 'web' && { boxShadow: '0 4px 16px rgba(' + a + ', 0.2)' }]} onPress={handleRetry}>
-                <Text style={styles.retryButtonText}>Retry</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={[styles.retryButton, Platform.OS === 'web' && { boxShadow: '0 4px 16px rgba(' + a + ', 0.2)' }]} onPress={() => router.push('/license')}>
-                <Text style={styles.retryButtonText}>Connect EA</Text>
-              </TouchableOpacity>
-            )}
+            <NeonCard
+              radius={R.row}
+              ring
+              onPress={mt5Connected ? handleRetry : () => router.push('/(tabs)/metatrader')}
+              style={styles.ctaFace}
+              wrapperStyle={styles.ctaWrap}
+            >
+              <Text style={[styles.ctaText, { color: cc, zIndex: 5 }]}>{mt5Connected ? 'RETRY' : 'CONNECT MT5'}</Text>
+            </NeonCard>
           </View>
         ) : (
-          <ScrollView showsVerticalScrollIndicator={false} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchSymbols(true)} tintColor={cc} colors={[cc]} />}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.scrollContent}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchSymbols(true)} tintColor={cc} colors={[cc]} />}
+          >
             {quotesWithActiveStatus.length === 0 ? (
               <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No symbols available</Text>
-                <Text style={styles.emptySubtext}>Connect an EA to view trading symbols</Text>
+                <Text style={styles.emptyText}>
+                  {mt5Connected ? 'No symbols on this account' : 'No MT5 account connected'}
+                </Text>
+                <Text style={styles.emptySubtext}>
+                  {mt5Connected
+                    ? 'Your broker returned an empty symbol list.'
+                    : 'Symbols are pulled live from your broker. Connect MT5 to see them.'}
+                </Text>
+                {!mt5Connected && (
+                  <NeonCard
+                    radius={R.row}
+                    ring
+                    onPress={() => router.push('/(tabs)/metatrader')}
+                    style={styles.ctaFace}
+                    wrapperStyle={[styles.ctaWrap, { marginTop: 24 }]}
+                  >
+                    <Text style={[styles.ctaText, { color: cc, zIndex: 5 }]}>CONNECT MT5</Text>
+                  </NeonCard>
+                )}
               </View>
             ) : (
-              quotesWithActiveStatus.map((quote, index) => (
-                <TouchableOpacity
-                  testID={`quote-item-${quote.symbol}`}
-                  key={quote.symbol}
-                  style={[styles.quoteCard, quote.isActive && styles.activeQuoteCard]}
-                  onPress={() => handleQuoteTap(quote.symbol)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.quoteHeader}>
-                    <View style={styles.symbolContainer}>
-                      <Text style={styles.symbol}>{quote.symbol}</Text>
-                      {quote.isActive && <Circle color="#00FF00" fill="#00FF00" size={8} style={styles.activeIndicator} />}
+              <>
+                <Text style={styles.groupLabel}>
+                  {apiSymbols.length > 0 ? `${apiSymbols.length} SYMBOLS` : 'SYMBOLS'}
+                  {activeCount > 0 ? ` · ${activeCount} LIVE` : ''}
+                </Text>
+                {quotesWithActiveStatus.map((quote) => (
+                  <NeonCard
+                    key={quote.symbol}
+                    testID={`quote-item-${quote.symbol}`}
+                    radius={R.card}
+                    /* The spinning rim marks the symbols actually trading, the
+                       way home reserves it for the live EA. */
+                    ring={quote.isActive}
+                    accent={quote.isActive ? { color: SIGNAL.live, rgb: '48, 209, 88' } : undefined}
+                    onPress={() => handleQuoteTap(quote.symbol)}
+                    style={[styles.quoteFace, { paddingHorizontal: padH }]}
+                    wrapperStyle={styles.quoteWrap}
+                  >
+                    <View style={styles.quoteHeader}>
+                      <View style={styles.symbolContainer}>
+                        <Text style={styles.symbol}>{quote.symbol}</Text>
+                        {quote.isActive && <Circle color={SIGNAL.live} fill={SIGNAL.live} size={7} style={styles.activeIndicator} />}
+                      </View>
+                      <Text style={[styles.liveTag, { color: quote.isActive ? SIGNAL.live : INK.ghost }]}>
+                        {quote.isActive ? 'LIVE' : 'IDLE'}
+                      </Text>
                     </View>
-                  </View>
-                  <View style={styles.priceContainer}>
-                    <View style={styles.priceColumn}>
-                      <Text style={styles.priceLabel}>LOT SIZE</Text>
-                      <Text style={styles.priceValue}>{formatLotSize(quote.lotSize)}</Text>
+                    <View style={styles.priceContainer}>
+                      <View style={styles.priceColumn}>
+                        <Text style={styles.priceLabel}>LOT SIZE</Text>
+                        <Text style={styles.priceValue}>{formatLotSize(quote.lotSize)}</Text>
+                      </View>
+                      <View style={styles.priceColumn}>
+                        <Text style={styles.priceLabel}>PLATFORM</Text>
+                        <Text style={styles.platformValue}>{quote.platform}</Text>
+                      </View>
+                      <View style={styles.priceColumn}>
+                        <Text style={styles.priceLabel}>DIRECTION</Text>
+                        <Text style={[styles.directionValue, { color: quote.direction === 'BUY' ? SIGNAL.buy : quote.direction === 'SELL' ? SIGNAL.sell : SIGNAL.both }]}>
+                          {quote.direction}
+                        </Text>
+                      </View>
                     </View>
-                    <View style={styles.priceColumn}>
-                      <Text style={styles.priceLabel}>PLATFORM</Text>
-                      <Text style={styles.platformValue}>{quote.platform}</Text>
-                    </View>
-                    <View style={styles.priceColumn}>
-                      <Text style={styles.priceLabel}>DIRECTION</Text>
-                      <Text style={[styles.directionValue, { color: quote.direction === 'BUY' ? '#00FF88' : quote.direction === 'SELL' ? '#FF4444' : '#FFAA00' }]}>{quote.direction}</Text>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              ))
+                  </NeonCard>
+                ))}
+              </>
             )}
           </ScrollView>
         )}
@@ -366,63 +386,72 @@ export default function QuotesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: SURFACE.ground,
-  },
+  container: { flex: 1, backgroundColor: '#000000' },
+
+  /* Header sits in the same centred column as the list, so the back button
+     lines up with the cards instead of hugging the viewport edge. */
+  headerOuter: { width: '100%', paddingHorizontal: 20, zIndex: 10 },
   header: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 16,
-    borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.08)',
+    width: '100%', maxWidth: CONTENT_MAX_WIDTH, alignSelf: 'center',
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 16,
   },
   backButton: {
-    marginRight: 16, width: 36, height: 36, borderRadius: RADIUS.pill,
+    marginRight: 14, width: 40, height: 40, borderRadius: 999,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: SURFACE.card,
-    borderWidth: 1, borderColor: SURFACE.hairline,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+    ...(Platform.OS === 'web' && {
+      backdropFilter: 'blur(60px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(60px) saturate(180%)',
+      boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.2), 0 4px 16px rgba(0,0,0,0.3)',
+    }),
   },
   headerContent: { flex: 1 },
-  titleContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  headerTitle: { fontSize: 18, fontWeight: '800', letterSpacing: 1.5, marginRight: 12 },
+  titleContainer: { flexDirection: 'row', alignItems: 'center' },
+  headerTitle: { fontSize: 20, fontWeight: '800', letterSpacing: 1.5, marginRight: 12 },
   statusContainer: { flexDirection: 'row', alignItems: 'center' },
-  statusText: { fontSize: 10, fontWeight: '600', marginLeft: 4, letterSpacing: 0.5 },
-  botName: { color: TEXT.muted, fontSize: 12, fontWeight: '500', textAlign: 'center' },
-  content: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
+  statusText: { fontSize: 10, fontWeight: '700', marginLeft: 5, letterSpacing: 1 },
+  botName: { color: INK.secondary, fontSize: 12, fontWeight: '500', marginTop: 3 },
   refreshButton: {
-    padding: 10, marginLeft: 8, borderRadius: 14,
+    marginLeft: 8, width: 40, height: 40, borderRadius: 999,
+    alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+    ...(Platform.OS === 'web' && {
+      backdropFilter: 'blur(60px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(60px) saturate(180%)',
+      boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.2), 0 4px 16px rgba(0,0,0,0.3)',
+    }),
   },
-  refreshButtonDisabled: { backgroundColor: 'rgba(255, 255, 255, 0.03)' },
-  symbolCount: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '400', marginTop: 2 },
+  refreshButtonDisabled: { backgroundColor: 'rgba(255,255,255,0.03)' },
+
+  content: { flex: 1, paddingHorizontal: 20, zIndex: 10 },
+  scrollContent: { width: '100%', maxWidth: CONTENT_MAX_WIDTH, alignSelf: 'center', paddingTop: 8, paddingBottom: 40 },
+  groupLabel: { ...GROUP_LABEL, marginBottom: 12, marginLeft: 16 },
+
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 60 },
-  loadingText: { color: '#CCCCCC', fontSize: 16, marginTop: 16, fontWeight: '500' },
+  loadingText: { color: INK.secondary, fontSize: 15, marginTop: 16, fontWeight: '500' },
   errorContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 60, paddingHorizontal: 20 },
-  errorText: { color: '#FF4444', fontSize: 16, textAlign: 'center', marginBottom: 20, lineHeight: 24 },
-  retryButton: {
-    backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 28, paddingVertical: 14,
-    borderRadius: 16, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.15)',
-  },
-  retryButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  errorText: { color: SIGNAL.sell, fontSize: 15, textAlign: 'center', marginBottom: 24, lineHeight: 22 },
+  ctaWrap: { width: '100%', maxWidth: 280 },
+  ctaFace: { paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
+  ctaText: { fontSize: 14, fontWeight: '700', letterSpacing: 1.2 },
+
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 60 },
-  emptyText: { color: '#CCCCCC', fontSize: 18, fontWeight: '600', marginBottom: 8 },
-  emptySubtext: { color: 'rgba(255,255,255,0.4)', fontSize: 14, textAlign: 'center' },
-  quoteCard: {
-    backgroundColor: SURFACE.card, borderRadius: RADIUS.card, padding: 16, marginBottom: 10,
-    borderWidth: 1, borderColor: SURFACE.hairline,
-  },
-  activeQuoteCard: {
-    // Semantic green for "live", kept separate from the accent.
-    borderColor: 'rgba(48, 209, 88, 0.45)', borderWidth: 1,
-  },
-  quoteHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  emptyText: { color: INK.primary, fontSize: 17, fontWeight: '600', marginBottom: 8 },
+  emptySubtext: { color: INK.secondary, fontSize: 13, textAlign: 'center' },
+
+  quoteWrap: { marginBottom: 14 },
+  quoteFace: { paddingVertical: 20 },
+  quoteHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, zIndex: 5 },
   symbolContainer: { flexDirection: 'row', alignItems: 'center' },
-  symbol: { color: TEXT.primary, fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
+  symbol: { color: INK.primary, fontSize: 16, fontWeight: '700', letterSpacing: 0.8 },
   activeIndicator: { marginLeft: 8 },
-  priceContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+  liveTag: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5 },
+  priceContainer: { flexDirection: 'row', justifyContent: 'space-between', zIndex: 5 },
   priceColumn: { alignItems: 'center', flex: 1 },
   priceLabel: { ...GROUP_LABEL, fontSize: 9, marginBottom: 6 },
-  priceValue: { color: '#FFFFFF', fontSize: 16, fontWeight: '600', fontFamily: 'monospace' },
-  platformValue: { color: TEXT.muted, fontSize: 13, fontWeight: '500', fontFamily: 'monospace' },
-  directionValue: { fontSize: 14, fontWeight: '600', fontFamily: 'monospace' },
+  priceValue: { color: INK.primary, fontSize: 16, fontWeight: '600', fontFamily: 'monospace' },
+  platformValue: { color: INK.secondary, fontSize: 13, fontWeight: '500', fontFamily: 'monospace' },
+  directionValue: { fontSize: 14, fontWeight: '700', fontFamily: 'monospace', letterSpacing: 0.5 },
 });

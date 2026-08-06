@@ -6,6 +6,7 @@ import { useTheme, ThemeName, GlassMode } from '@/providers/theme-provider';
 import { RobotLogo } from './robot-logo';
 import { SignalLog } from '@/services/signals-monitor';
 import type { EA } from '@/providers/app-provider';
+import { cardSurface } from '@/constants/neon';
 
 // ===== AUDIO ENGINE =====
 let audioCtx: AudioContext | null = null;
@@ -297,14 +298,17 @@ export function DynamicIsland({ visible, newSignal, onSignalDismiss }: DynamicIs
 
   if (!visible || !primaryEA) return null;
 
-  // Glass-aware styles
-  const pillGlow = isNeon ? { border: '1px solid ' + ac + '44', boxShadow: '0 0 15px rgba(' + ar + ',0.4),0 0 30px rgba(' + ar + ',0.15)', background: 'radial-gradient(ellipse at 30% 30%,rgba(255,255,255,0.1),transparent 60%),rgba(6,6,8,0.88)' }
+  // The pill and the expanded sheet are the same opaque near-black face as the
+  // cards on the screen behind them — the island was the last surface still
+  // mixing its own translucent grey, which read as a different app when it
+  // floated over home.
+  const pillGlow = isNeon ? { ...cardSurface(ar), border: '1px solid rgba(' + ar + ',0.35)' }
     : isLiquid ? { border: '1.5px solid rgba(' + ar + ',0.35)', boxShadow: '0 0 10px rgba(' + ar + ',0.4),0 0 25px rgba(' + ar + ',0.25)', background: 'linear-gradient(135deg,rgba(255,255,255,0.06),rgba(0,0,0,0.3))' }
     : isCmd ? { border: '1.5px solid ' + ac, boxShadow: '0 0 12px rgba(' + ar + ',0.4),0 0 24px rgba(' + ar + ',0.2)', background: 'rgba(6,6,8,0.92)' }
     : isPill ? { border: '1.5px solid rgba(' + ar + ',0.25)', boxShadow: '0 0 15px rgba(' + ar + ',0.2),0 0 40px rgba(' + ar + ',0.08)', background: 'linear-gradient(135deg,rgba(' + ar + ',0.06),rgba(255,255,255,0.04) 30%,rgba(0,0,0,0.5))', borderRadius: '30px' }
     : { border: '0.5px solid rgba(255,255,255,0.04)', boxShadow: '0 0 25px rgba(' + ar + ',0.3),0 0 50px rgba(' + ar + ',0.12)', background: 'rgba(12,12,14,0.97)' };
 
-  const expGlow = isNeon ? { border: '1px solid ' + ac + '33', boxShadow: '0 0 20px rgba(' + ar + ',0.35),0 0 40px rgba(' + ar + ',0.15),0 12px 48px rgba(0,0,0,0.7)', background: 'radial-gradient(ellipse 120% 40% at 20% 10%,rgba(255,255,255,0.08),transparent 50%),rgba(6,6,8,0.92)' }
+  const expGlow = isNeon ? { ...cardSurface(ar), border: '1px solid rgba(' + ar + ',0.35)', boxShadow: cardSurface(ar).boxShadow + ',0 12px 48px rgba(0,0,0,0.7)' }
     : isLiquid ? { border: '1.5px solid rgba(' + ar + ',0.3)', boxShadow: '0 0 12px rgba(' + ar + ',0.4),0 0 30px rgba(' + ar + ',0.2),0 12px 48px rgba(0,0,0,0.7)', background: 'linear-gradient(135deg,rgba(255,255,255,0.06),rgba(0,0,0,0.3)),rgba(6,6,8,0.92)' }
     : isCmd ? { border: '2px solid ' + ac, boxShadow: '0 0 15px rgba(' + ar + ',0.4),0 0 30px rgba(' + ar + ',0.2),0 12px 48px rgba(0,0,0,0.7)', background: 'rgba(6,6,8,0.94)' }
     : isPill ? { border: '1.5px solid rgba(' + ar + ',0.25)', boxShadow: '0 0 15px rgba(' + ar + ',0.2),0 0 40px rgba(' + ar + ',0.08),0 12px 48px rgba(0,0,0,0.7),inset 0 1px 0 rgba(255,255,255,0.08)', background: 'linear-gradient(135deg,rgba(' + ar + ',0.06),rgba(255,255,255,0.04) 30%,rgba(0,0,0,0.5))', borderRadius: '30px' }

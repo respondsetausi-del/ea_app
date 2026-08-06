@@ -47,6 +47,9 @@ import { useTheme } from '@/providers/theme-provider';
 import { useApp } from '@/providers/app-provider';
 import { apiService } from '@/services/api';
 import { BROKER_SYMBOLS } from '@/constants/broker-symbols';
+import { CONTENT_MAX_WIDTH, GROUP_LABEL, INK, SIGNAL, cardSurface, radii, screenWash, webPressable } from '@/constants/neon';
+import { NeonCard } from '@/components/neon-card';
+import { NeonModal, NeonModalButton } from '@/components/neon-modal';
 
 type ScanHistoryEntry = {
   id: string;
@@ -66,8 +69,29 @@ const SIGNAL_TTL_MS = 15 * 60 * 1000;
 
 export default function ScannerScreen() {
   const { mt4Symbols, mt5Symbols, placeManualTrade, mt5Account, eas, ensureMT5Connected } = useApp();
-  const { theme } = useTheme();
+  const { theme, cardShape } = useTheme();
   const accent = theme.accent;
+  const a = theme.accentRgb;
+  const R = radii(cardShape);
+  /** Permission refusal used to be a native Alert; it's a themed popup now. */
+  const [permissionMsg, setPermissionMsg] = useState<string | null>(null);
+
+  /**
+   * Outcome of the auto-execution that follows each scan.
+   *
+   * The execution itself is deliberately silent — no WebView, no interstitial —
+   * but it used to be *invisible*: skips and broker rejections only ever reached
+   * console.error, so a scan that placed nothing looked exactly like one that
+   * filled. This is the receipt.
+   */
+  const [execStatus, setExecStatus] = useState<
+    | { state: 'placing'; total: number }
+    | { state: 'placed'; placed: number; total: number }
+    | { state: 'partial'; placed: number; total: number; reason: string }
+    | { state: 'failed'; reason: string }
+    | { state: 'skipped'; reason: string }
+    | null
+  >(null);
 
   // Chart Scanner state
   const [pickedImage, setPickedImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
@@ -160,16 +184,18 @@ export default function ScannerScreen() {
     setAnalyzerDataUri(null);
     setScanPhase(-1);
     setSignalAt(null);
+    setExecStatus(null);
   }, []);
 
   const handlePickChartImage = useCallback(async () => {
     try {
       setScanError(null);
       setInsights(null);
+      setExecStatus(null);
       if (Platform.OS !== 'web') {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
-          Alert.alert('Permission needed', 'Please allow access to your media library to upload a chart.');
+          setPermissionMsg('Please allow access to your media library to upload a chart.');
           return;
         }
       }
@@ -214,24 +240,70 @@ export default function ScannerScreen() {
 
     // ── AUTO-EXECUTE: fire trade immediately after scan, silently via Api2Trade ──
     const action = result.signal.action;
-    if (action === 'BUY' || action === 'SELL') {
-      const sym = (tradeSymbol || '').trim(); // exact broker casing — no uppercasing
-      let uuid = mt5Account?.uuid;
-      const cfg = lookupSymbolConfig(sym);
-      const lot = parseFloat(String(tradeLot.trim() || cfg?.lot || '0.01').replace(',', '.'));
-      const count = Math.max(1, Math.min(100, parseInt(tradeCount.trim() || cfg?.count || '1', 10) || 1));
-      if (sym && uuid && isFinite(lot) && lot > 0) {
-        // Probe/reconnect once so a silently-expired session doesn't drop trades.
-        const fresh = await ensureMT5Connected();
-        if (fresh) uuid = fresh;
-        const operation = action === 'BUY' ? 'Buy' : 'Sell';
-        Promise.all(Array.from({ length: count }, () =>
-          apiService.sendMT5Trade({ id: uuid, action: 'open', symbol: sym, operation, volume: lot, comment: (eas?.[0]?.name || 'Robot') })
-            .catch((e: any) => console.error('[scanner] auto-exec error:', e?.message || e)),
-        )).catch(() => {});
-      } else if (!sym) {
-        console.warn('[scanner] auto-exec skipped: no symbol selected');
-      }
+
+    // WAIT is a real answer, not a failure — say so rather than leaving the
+    // last scan's receipt on screen.
+    if (action !== 'BUY' && action !== 'SELL') {
+      setExecStatus({ state: 'skipped', reason: 'Signal was WAIT — nothing placed' });
+      return;
+    }
+
+    const sym = (tradeSymbol || '').trim(); // exact broker casing — no uppercasing
+    let uuid = mt5Account?.uuid;
+    const cfg = lookupSymbolConfig(sym);
+    const lot = parseFloat(String(tradeLot.trim() || cfg?.lot || '0.01').replace(',', '.'));
+    const count = Math.max(1, Math.min(100, parseInt(tradeCount.trim() || cfg?.count || '1', 10) || 1));
+
+    if (!sym) {
+      setExecStatus({ state: 'skipped', reason: 'No symbol selected — pick one above to auto-trade' });
+      return;
+    }
+    if (!uuid) {
+      setExecStatus({ state: 'skipped', reason: 'No MT5 account connected' });
+      return;
+    }
+    if (!isFinite(lot) || lot <= 0) {
+      setExecStatus({ state: 'skipped', reason: `Lot size "${tradeLot}" isn't a valid number` });
+      return;
+    }
+
+    setExecStatus({ state: 'placing', total: count });
+    try {
+      // Probe/reconnect once so a silently-expired session doesn't drop trades.
+      const fresh = await ensureMT5Connected();
+      if (fresh) uuid = fresh;
+      const operation = action === 'BUY' ? 'Buy' : 'Sell';
+
+      // The route rejects anything the broker didn't ticket, so a resolved
+      // promise here means a real fill.
+      const settled = await Promise.allSettled(
+        Array.from({ length: count }, () =>
+          apiService.sendMT5Trade({
+            id: uuid as string,
+            action: 'open',
+            symbol: sym,
+            operation,
+            volume: lot,
+            comment: (eas?.[0]?.name || 'Robot'),
+          }),
+        ),
+      );
+
+      const placed = settled.filter((s) => s.status === 'fulfilled').length;
+      const firstError = settled.find((s) => s.status === 'rejected') as PromiseRejectedResult | undefined;
+      const reason = firstError?.reason instanceof Error
+        ? firstError.reason.message
+        : String(firstError?.reason ?? 'Broker rejected the order');
+
+      if (placed === count) setExecStatus({ state: 'placed', placed, total: count });
+      else if (placed > 0) setExecStatus({ state: 'partial', placed, total: count, reason });
+      else setExecStatus({ state: 'failed', reason });
+
+      if (placed < count) console.error('[scanner] auto-exec:', placed, 'of', count, '—', reason);
+    } catch (e: any) {
+      const reason = e?.message || 'Could not reach the trade service';
+      console.error('[scanner] auto-exec error:', reason);
+      setExecStatus({ state: 'failed', reason });
     }
   }, [tradeSymbol, tradeLot, tradeCount, lookupSymbolConfig, mt5Account?.uuid, eas, ensureMT5Connected]);
 
@@ -494,10 +566,10 @@ export default function ScannerScreen() {
 
     const signalColor =
       data.signal.action === 'BUY'
-        ? '#22C55E'
+        ? SIGNAL.buy
         : data.signal.action === 'SELL'
-        ? '#EF4444'
-        : '#9CA3AF';
+        ? SIGNAL.sell
+        : SIGNAL.idle;
     const signalBg =
       data.signal.action === 'BUY'
         ? 'rgba(34, 197, 94, 0.12)'
@@ -638,13 +710,13 @@ export default function ScannerScreen() {
           <View
             style={[
               styles.scannerMixBar,
-              { flex: Math.max(1, data.bullishPercent), backgroundColor: '#22C55E' },
+              { flex: Math.max(1, data.bullishPercent), backgroundColor: SIGNAL.buy },
             ]}
           />
           <View
             style={[
               styles.scannerMixBar,
-              { flex: Math.max(1, data.bearishPercent), backgroundColor: '#EF4444' },
+              { flex: Math.max(1, data.bearishPercent), backgroundColor: SIGNAL.sell },
             ]}
           />
         </View>
@@ -672,22 +744,23 @@ export default function ScannerScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, Platform.OS === 'web' && ({ backgroundImage: screenWash(a) } as any)]}>
       <View style={styles.header}>
         <TouchableOpacity
-          style={styles.backButton}
+          style={[styles.backButton, webPressable]}
+          activeOpacity={0.7}
           onPress={() => {
             resetScanner();
             router.back();
           }}
         >
-          <ArrowLeft color="#FFFFFF" size={22} />
+          <ArrowLeft color="rgba(255,255,255,0.8)" size={20} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: accent }]}>CHART SCANNER</Text>
         <TouchableOpacity
           onPress={() => setHistoryOpen(v => !v)}
           activeOpacity={0.7}
-          style={[styles.synapseHeaderBtn, { borderColor: accent + '66' }, webGlow(accent)]}
+          style={[styles.synapseHeaderBtn, webPressable, { borderColor: accent + '66' }, webGlow(accent)]}
         >
           <History color={accent} size={16} />
           {scanHistory.length > 0 && (
@@ -742,10 +815,10 @@ export default function ScannerScreen() {
                 {scanHistory.map(h => {
                   const c =
                     h.action === 'BUY'
-                      ? '#22C55E'
+                      ? SIGNAL.buy
                       : h.action === 'SELL'
-                      ? '#EF4444'
-                      : '#9CA3AF';
+                      ? SIGNAL.sell
+                      : SIGNAL.idle;
                   return (
                     <View
                       key={h.id}
@@ -831,10 +904,12 @@ export default function ScannerScreen() {
                         activeOpacity={0.7}
                         style={[
                           styles.scannerDropdownItem,
+                          webPressable,
                           {
-                            borderColor: active ? accent + '44' : 'transparent',
-                            backgroundColor: active ? accent + '18' : 'transparent',
+                            borderColor: active ? 'rgba(' + a + ', 0.45)' : 'rgba(255,255,255,0.07)',
+                            backgroundColor: active ? 'rgba(' + a + ', 0.14)' : 'rgba(255,255,255,0.02)',
                           },
+                          active && Platform.OS === 'web' && ({ boxShadow: '0 0 14px rgba(' + a + ', 0.25)' } as any),
                         ]}
                       >
                         <View>
@@ -938,10 +1013,10 @@ export default function ScannerScreen() {
               {insights.levels.map((ly, li) => {
                 const signalColor =
                   insights.signal.action === 'BUY'
-                    ? '#22C55E'
+                    ? SIGNAL.buy
                     : insights.signal.action === 'SELL'
-                    ? '#EF4444'
-                    : '#9CA3AF';
+                    ? SIGNAL.sell
+                    : SIGNAL.idle;
                 return (
                   <View
                     key={`lvl-${li}`}
@@ -1050,21 +1125,57 @@ export default function ScannerScreen() {
           </View>
         )}
 
+        {/* AI read-out — the one live thing on this screen once a scan lands,
+            so it carries the spinning rim the way home marks the running EA. */}
         {insights && (
-          <View
-            style={[
-              styles.scannerResultBox,
-              { borderColor: accent + '66' },
-              webGlow(accent),
-            ]}
-          >
-            <Text style={[styles.scannerResultTitle, { color: accent }]}>
+          <NeonCard radius={R.card} ring style={styles.scannerResultFace}>
+            <Text style={[styles.scannerResultTitle, { color: accent, zIndex: 5 }]}>
               CHART DIAGNOSTICS
             </Text>
-            {renderInsights(insights)}
-          </View>
+            <View style={{ zIndex: 5 }}>{renderInsights(insights)}</View>
+
+            {/* Auto-execution receipt — what the scan actually did at the broker. */}
+            {execStatus && (() => {
+              const tone =
+                execStatus.state === 'placed' ? SIGNAL.buy
+                : execStatus.state === 'partial' ? SIGNAL.both
+                : execStatus.state === 'failed' ? SIGNAL.sell
+                : INK.secondary;
+              const label =
+                execStatus.state === 'placing' ? `PLACING ${execStatus.total} TRADE${execStatus.total > 1 ? 'S' : ''}…`
+                : execStatus.state === 'placed' ? `${execStatus.placed} OF ${execStatus.total} PLACED`
+                : execStatus.state === 'partial' ? `${execStatus.placed} OF ${execStatus.total} PLACED`
+                : execStatus.state === 'failed' ? 'NOT PLACED'
+                : 'NOT PLACED';
+              const detail =
+                execStatus.state === 'partial' || execStatus.state === 'failed' ? execStatus.reason
+                : execStatus.state === 'skipped' ? execStatus.reason
+                : null;
+              return (
+                <View style={[styles.scannerExecRow, { borderColor: tone + '55', backgroundColor: tone + '14' }]}>
+                  <View style={styles.scannerExecHeader}>
+                    {execStatus.state === 'placing'
+                      ? <ActivityIndicator color={tone} size="small" />
+                      : <View style={[styles.scannerExecDot, { backgroundColor: tone }]} />}
+                    <Text style={[styles.scannerExecLabel, { color: tone }]}>{label}</Text>
+                  </View>
+                  {detail && <Text style={styles.scannerExecDetail}>{detail}</Text>}
+                </View>
+              );
+            })()}
+          </NeonCard>
         )}
       </ScrollView>
+
+      <NeonModal
+        visible={!!permissionMsg}
+        onClose={() => setPermissionMsg(null)}
+        icon={<Shield color={accent} size={26} />}
+        title="PERMISSION NEEDED"
+        message={permissionMsg ?? ''}
+      >
+        <NeonModalButton label="OK" onPress={() => setPermissionMsg(null)} />
+      </NeonModal>
 
       {/* Hidden native-only analyzer: renders the image on a canvas and posts back pixel stats. */}
       {Platform.OS !== 'web' && analyzerDataUri && (
@@ -1087,37 +1198,47 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
+  /* Header rides in the same centred column as the body, so the back button
+     lines up with the cards instead of hugging the viewport edge. */
   header: {
+    width: '100%',
+    maxWidth: CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     gap: 10,
-    backgroundColor: 'rgba(0,0,0,0.9)',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    zIndex: 10,
   },
   backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
     justifyContent: 'center',
     alignItems: 'center',
+    ...(Platform.OS === 'web' && {
+      backdropFilter: 'blur(60px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(60px) saturate(180%)',
+      boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.2), 0 4px 16px rgba(0,0,0,0.3)',
+    }),
   },
   headerTitle: {
     flex: 1,
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '800',
     letterSpacing: 1.5,
     textAlign: 'center',
   },
   synapseHeaderBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 999,
     borderWidth: 1,
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
@@ -1141,71 +1262,80 @@ const styles = StyleSheet.create({
 
   // Chart Scanner Upload
   scannerBody: {
-    padding: 20,
+    width: '100%',
+    maxWidth: CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 4,
     gap: 16,
     paddingBottom: 40,
+    zIndex: 10,
   },
   scannerIntro: {
-    color: 'rgba(255,255,255,0.7)',
+    color: INK.secondary,
     fontSize: 13,
-    lineHeight: 18,
+    lineHeight: 19,
     textAlign: 'center',
   },
-  // Symbol picker / dropdown / lot inputs (ported from ea-converter)
+  // Symbol picker / dropdown / lot inputs
   scannerSymbolPicker: {
-    padding: 14,
-    borderRadius: 12,
+    padding: 18,
+    borderRadius: 26,
     borderWidth: 1,
-    backgroundColor: '#080D1A',
+    borderColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: '#0c0c0c',
   },
   scannerSymbolLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    marginBottom: 6,
+    ...GROUP_LABEL,
+    marginBottom: 10,
+    marginLeft: 4,
   },
   scannerDropdownTrigger: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderRadius: 10,
+    borderRadius: 999,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    backgroundColor: '#000',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
   scannerDropdownValue: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.5,
     flex: 1,
   },
   scannerDropdownList: {
-    marginTop: 6,
-    borderRadius: 10,
+    marginTop: 10,
+    borderRadius: 22,
     borderWidth: 1,
-    backgroundColor: '#000',
+    backgroundColor: 'rgba(255,255,255,0.03)',
   },
   scannerDropdownCatHeader: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
     borderBottomWidth: 1,
   },
   scannerDropdownCatText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
+    ...GROUP_LABEL,
+    fontSize: 10,
   },
   scannerDropdownItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderLeftWidth: 2,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    marginHorizontal: 8,
+    marginVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
   },
   scannerDropdownItemText: {
     fontSize: 14,
     fontWeight: '700',
+    letterSpacing: 0.4,
   },
   scannerDropdownItemDesc: {
     fontSize: 11,
@@ -1216,28 +1346,30 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   scannerSymbolInput: {
-    borderRadius: 10,
+    borderRadius: 999,
     borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 13,
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
-    backgroundColor: '#000',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    ...(Platform.OS === 'web' && ({ outlineStyle: 'none' } as any)),
   },
   scannerLotRow: {
     flexDirection: 'row',
     gap: 12,
-    padding: 14,
-    borderRadius: 12,
+    padding: 18,
+    borderRadius: 26,
     borderWidth: 1,
-    backgroundColor: '#080D1A',
+    borderColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: '#0c0c0c',
   },
   scannerDropzone: {
-    borderRadius: 16,
+    borderRadius: 26,
     borderWidth: 1,
     borderStyle: 'dashed',
-    backgroundColor: '#080D1A',
+    backgroundColor: '#0c0c0c',
     minHeight: 260,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1263,7 +1395,7 @@ const styles = StyleSheet.create({
   scannerPreview: {
     width: '100%',
     height: 260,
-    backgroundColor: '#000',
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
   scannerActionsRow: {
     flexDirection: 'row',
@@ -1278,7 +1410,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 28,
     borderWidth: 1,
-    backgroundColor: '#080D1A',
+    backgroundColor: '#0c0c0c',
   },
   scannerSecondaryText: {
     fontSize: 12,
@@ -1294,7 +1426,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 28,
     borderWidth: 1,
-    backgroundColor: '#080D1A',
+    backgroundColor: '#0c0c0c',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 10,
@@ -1307,7 +1439,7 @@ const styles = StyleSheet.create({
   },
   scannerErrorBox: {
     padding: 14,
-    borderRadius: 12,
+    borderRadius: 26,
     borderWidth: 1,
     backgroundColor: 'rgba(255, 77, 77, 0.08)',
   },
@@ -1316,12 +1448,40 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
   },
-  scannerResultBox: {
-    padding: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    backgroundColor: '#080D1A',
+  /* NeonCard supplies the face and rim; this is the body inside it. */
+  scannerResultFace: {
+    padding: 20,
     gap: 12,
+  },
+  scannerExecRow: {
+    marginTop: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    gap: 4,
+    zIndex: 5,
+  },
+  scannerExecHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  scannerExecDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  scannerExecLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+  },
+  scannerExecDetail: {
+    color: INK.secondary,
+    fontSize: 11,
+    lineHeight: 16,
+    marginLeft: 15,
   },
   scannerResultTitle: {
     fontSize: 12,
@@ -1344,7 +1504,7 @@ const styles = StyleSheet.create({
   },
   scannerSignalBox: {
     position: 'relative',
-    borderRadius: 20,
+    borderRadius: 26,
     borderWidth: 2,
     paddingVertical: 20,
     paddingHorizontal: 20,
@@ -1471,10 +1631,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   scannerPhasesBox: {
-    borderRadius: 16,
+    borderRadius: 26,
     borderWidth: 1,
     padding: 16,
-    backgroundColor: '#080D1A',
+    backgroundColor: '#0c0c0c',
     gap: 6,
   },
   scannerPhasesHeader: {
@@ -1513,10 +1673,10 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   scannerHistoryBox: {
-    borderRadius: 16,
+    borderRadius: 26,
     borderWidth: 1,
     padding: 14,
-    backgroundColor: '#080D1A',
+    backgroundColor: '#0c0c0c',
     gap: 12,
   },
   scannerHistoryHeader: {

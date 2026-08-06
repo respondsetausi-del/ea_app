@@ -1,4 +1,4 @@
-import { orderSend, orderModify, orderClose } from '@/services/api2trade';
+import { orderSend, orderModify, orderClose, normalizeVolume } from '@/services/api2trade';
 import type { Operation } from '@/services/api2trade';
 
 export async function POST(request: Request): Promise<Response> {
@@ -8,6 +8,8 @@ export async function POST(request: Request): Promise<Response> {
 
     if (action === 'open') {
       const id = body?.id as string;
+      // Never uppercase: broker symbols are case-sensitive and suffixed
+      // (`XAUUSD.mic`, `.US30.mic`). `XAUUSD.MIC` is rejected outright.
       const symbol = body?.symbol as string;
       const operation = body?.operation as Operation;
       const volume = Number(body?.volume);
@@ -16,17 +18,30 @@ export async function POST(request: Request): Promise<Response> {
         return Response.json({ error: 'id, symbol, operation, and volume are required' }, { status: 400 });
       }
 
+      // Clamp to the broker's min/step/max here rather than in each caller, so
+      // the scanner, the batch loop and manual trades all get it.
+      const safeVolume = await normalizeVolume(id, symbol, volume);
+
       const result = await orderSend({
         id,
         symbol,
         operation,
-        volume,
+        volume: safeVolume,
         price: body?.price ? Number(body.price) : undefined,
         slippage: body?.slippage ? Number(body.slippage) : undefined,
         stoploss: body?.stoploss ? Number(body.stoploss) : undefined,
         takeprofit: body?.takeprofit ? Number(body.takeprofit) : undefined,
         comment: body?.comment,
       });
+
+      // OrderSend answers 200 even when the broker rejects the order, so a
+      // ticket is the only proof it was actually placed.
+      if (!result || typeof result.ticket !== 'number' || result.ticket <= 0) {
+        const reason = (result as any)?.error || (result as any)?.message || 'Broker rejected the order';
+        console.error('MT5 order rejected:', symbol, safeVolume, reason);
+        return Response.json({ error: reason, order: result, volume: safeVolume }, { status: 502 });
+      }
+
       return Response.json(result);
     }
 

@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CandleLogo } from '@/components/candle-logo';
 import { FloatingField } from '@/components/floating-field';
+import { NeonModal, NeonModalButton } from '@/components/neon-modal';
 // Networking disabled: avoid external browser/payment flows
 import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
@@ -94,6 +95,21 @@ export default function LoginScreen() {
       const account = await apiService.authenticate({ email: trimmedEmail });
 
       if (account.status !== 'ok') {
+        // Their window closed. Say so plainly — "no access yet" would read as
+        // "you were never let in", which is both wrong and unhelpful here.
+        if (account.expired) {
+          const ended = account.expiry_date
+            ? new Date(account.expiry_date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
+            : null;
+          setModalTitle('Access expired');
+          setModalMessage(
+            ended
+              ? `Your access ended on ${ended}. Renew to continue trading.`
+              : 'Your access period has ended. Renew to continue trading.',
+          );
+          setModalVisible(true);
+          return;
+        }
         // A mentor has added them and payment is already recorded — the only
         // thing left is the super admin's approval. Don't charge them twice.
         if (account.approvalStatus === 'pending' && account.paid) {
@@ -243,43 +259,36 @@ export default function LoginScreen() {
       </KeyboardAvoidingView>
 
       {/* Alert Modal */}
-      {modalVisible && (
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalIconRow}>
-              <View style={[styles.modalIconCircle, { backgroundColor: 'rgba(' + a + ', 0.15)', borderColor: 'rgba(' + a + ', 0.3)' }]}>
-                <Text style={[styles.modalIconText, { color: ac }]}>!</Text>
-              </View>
-            </View>
-            <Text style={styles.modalTitle}>{modalTitle}</Text>
-            <Text style={styles.modalMessage}>{modalMessage}</Text>
-            <TouchableOpacity
-              style={styles.modalButton}
-              onPress={() => setModalVisible(false)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.modalButtonText}>Dismiss</Text>
-            </TouchableOpacity>
-            {modalTitle === 'Email Already Used' && (
-              <TouchableOpacity
-                style={[styles.reactivateButton, { backgroundColor: 'rgba(' + a + ', 0.85)', shadowColor: ac }]}
-                onPress={() => {
-                  setModalVisible(false);
-                  setReactivateVisible(true);
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.reactivateButtonText}>Reactivate Account</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      )}
+      <NeonModal
+        visible={modalVisible}
+        onClose={() => setModalVisible(false)}
+        icon={<Text style={[styles.modalIconText, { color: ac }]}>!</Text>}
+        title={modalTitle}
+        message={modalMessage}
+      >
+        {modalTitle === 'Email Already Used' && (
+          <NeonModalButton
+            label="REACTIVATE ACCOUNT"
+            onPress={() => { setModalVisible(false); setReactivateVisible(true); }}
+          />
+        )}
+        <NeonModalButton
+          label="Dismiss"
+          kind={modalTitle === 'Email Already Used' ? 'ghost' : 'primary'}
+          onPress={() => setModalVisible(false)}
+        />
+      </NeonModal>
 
       {/* Payment Modal */}
-      {paymentVisible && (
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, styles.paymentModal]}>
+      <NeonModal
+        visible={paymentVisible}
+        onClose={() => setPaymentVisible(false)}
+        maxWidth={560}
+        fill
+        /* Mid-payment: a stray backdrop tap must not close the checkout. */
+        dismissOnBackdrop={false}
+      >
+          <View style={styles.paymentModal}>
             <View style={styles.paymentHeader}>
               <Text style={styles.modalTitle}>Complete Payment</Text>
               <TouchableOpacity
@@ -311,13 +320,17 @@ export default function LoginScreen() {
               </View>
             )}
           </View>
-        </View>
-      )}
+      </NeonModal>
 
       {/* Reactivate Account Modal */}
-      {reactivateVisible && (
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, styles.paymentModal]}>
+      <NeonModal
+        visible={reactivateVisible}
+        onClose={() => setReactivateVisible(false)}
+        maxWidth={560}
+        fill
+        dismissOnBackdrop={false}
+      >
+          <View style={styles.paymentModal}>
             <View style={styles.paymentHeader}>
               <Text style={styles.modalTitle}>Reactivate Account</Text>
               <TouchableOpacity
@@ -342,8 +355,7 @@ export default function LoginScreen() {
               </View>
             )}
           </View>
-        </View>
-      )}
+      </NeonModal>
     </SafeAreaView>
   );
 }
@@ -478,52 +490,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.5,
   },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 340,
-    padding: 28,
-    backgroundColor: 'rgba(20, 20, 20, 0.85)',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.5,
-    shadowRadius: 32,
-    elevation: 20,
-    ...(Platform.OS === 'web' && {
-      backdropFilter: 'blur(60px)',
-      WebkitBackdropFilter: 'blur(60px)',
-    }),
-  },
-  modalIconRow: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  modalIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255, 26, 26, 0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 26, 26, 0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   modalIconText: {
-    color: '#FF4D4D',
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
   },
   modalTitle: {
@@ -533,32 +501,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: 'center',
   },
-  modalMessage: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
-    marginBottom: 24,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  modalButton: {
-    width: '100%',
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  modalButtonText: {
-    color: '#FFFFFF',
-    textAlign: 'center',
-    fontSize: 15,
-    fontWeight: '500',
-    letterSpacing: 0.3,
-  },
+  /* The checkout and reactivate sheets fill the NeonModal's card, which
+     already supplies the surface and rim — this only lays the body out. */
   paymentModal: {
-    maxWidth: 800,
-    height: '80%',
-    padding: 20,
+    flex: 1,
+    width: '100%',
   },
   paymentHeader: {
     flexDirection: 'row',
@@ -580,23 +527,5 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.6)',
     fontSize: 14,
     fontWeight: '500',
-  },
-  reactivateButton: {
-    width: '100%',
-    paddingVertical: 14,
-    borderRadius: 12,
-    marginTop: 10,
-    backgroundColor: 'rgba(255, 26, 26, 0.85)',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  reactivateButtonText: {
-    color: '#FFFFFF',
-    textAlign: 'center',
-    fontSize: 15,
-    fontWeight: '600',
-    letterSpacing: 0.3,
   },
 });

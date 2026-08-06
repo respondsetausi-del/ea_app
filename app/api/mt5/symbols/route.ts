@@ -1,4 +1,4 @@
-import { getSymbolList, getQuote, getQuoteMany, getMarketWatch } from '@/services/api2trade';
+import { getSymbolList, getQuote, getQuoteMany, getMarketWatch, getSymbolParams } from '@/services/api2trade';
 
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -34,7 +34,14 @@ export async function GET(request: Request): Promise<Response> {
       return Response.json(watch);
     }
 
-    return Response.json({ error: 'Invalid action. Use: list, quote, quotes, watch' }, { status: 400 });
+    if (action === 'params') {
+      const symbol = url.searchParams.get('symbol');
+      if (!symbol) return Response.json({ error: 'Symbol required' }, { status: 400 });
+      const params = await getSymbolParams(id, symbol);
+      return Response.json(params);
+    }
+
+    return Response.json({ error: 'Invalid action. Use: list, quote, quotes, watch, params' }, { status: 400 });
   } catch (error) {
     console.error('MT5 symbols error:', error);
     return Response.json({ error: 'Failed to fetch symbol data' }, { status: 502 });

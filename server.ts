@@ -1412,6 +1412,30 @@ async function handleApi(request: Request): Promise<Response> {
       return new Response('Method Not Allowed', { status: 405 });
     }
 
+    if (pathname === '/api/mt5/session') {
+      const route = await import('./app/api/mt5/session/route.ts');
+      if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    if (pathname === '/api/mt5/orders') {
+      const route = await import('./app/api/mt5/orders/route.ts');
+      if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    if (pathname === '/api/mt5/history') {
+      const route = await import('./app/api/mt5/history/route.ts');
+      if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
+    if (pathname === '/api/mt5/brokers') {
+      const route = await import('./app/api/mt5/brokers/route.ts');
+      if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
+      return new Response('Method Not Allowed', { status: 405 });
+    }
+
     if (pathname === '/api/mt5/batch/start') {
       const route = await import('./app/api/mt5/batch/start/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
@@ -1432,7 +1456,7 @@ async function handleApi(request: Request): Promise<Response> {
 
     // Add terminal-proxy routing
     if (pathname === '/api/terminal-proxy') {
-      const route = await import('./app/api/terminal-proxy.ts');
+      const route = await import('./api-handlers/terminal-proxy.ts');
       if (request.method === 'GET' && typeof route.default === 'function') {
         // Convert Bun Request to Express-like request/response
         const expressReq = {
@@ -1664,9 +1688,16 @@ const server = Bun.serve({
 
 console.log(`Server running on http://localhost:${server.port}`);
 
-// Resume any active MT5 batches from the DB so a restart/redeploy/sleep doesn't
-// kill running loops — they pick up where they left off.
-import('./app/api/mt5/batch/engine.ts')
+// Restore MT5 sessions BEFORE resuming batches: a resumed flight may be due to
+// trade immediately, and it needs a live account to trade into. This also
+// starts the heartbeat that wakes a session back up when the broker drops it.
+import('./app/api/mt5/session-keeper.ts')
+  .then((m) => m.resumeSessions?.())
+  .then(() => console.log('[MT5:session] restore-on-boot complete'))
+  .catch((e) => console.error('[MT5:session] restore-on-boot failed:', e?.message || e))
+  // Resume any active MT5 batches from the DB so a restart/redeploy/sleep doesn't
+  // kill running loops — they pick up where they left off.
+  .then(() => import('./app/api/mt5/batch/engine.ts'))
   .then((m) => m.resumeBatches?.())
   .then(() => console.log('[Batch:srv] resume-on-boot complete'))
   .catch((e) => console.error('[Batch:srv] resume-on-boot failed:', e?.message || e));

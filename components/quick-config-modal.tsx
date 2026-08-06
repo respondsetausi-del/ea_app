@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, ScrollView, Platform } from 'react-native';
 import { X, Zap } from 'lucide-react-native';
 import { apiService } from '@/services/api';
+import { NeonModal, NeonModalButton } from '@/components/neon-modal';
+import { INK } from '@/constants/neon';
 
 export interface QuickConfig {
   symbol: string;
@@ -52,9 +54,8 @@ export default function QuickConfigModal({ visible, uuid, accent = '#22C55E', on
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={[styles.card, { borderColor: accent + '66' }]}>
+    <NeonModal visible={visible} onClose={onClose} maxWidth={460} dismissOnBackdrop={false}>
+      <View style={styles.body}>
           <View style={styles.header}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <Zap color={accent} size={18} strokeWidth={2.5} />
@@ -104,36 +105,29 @@ export default function QuickConfigModal({ visible, uuid, accent = '#22C55E', on
             <TextInput style={[styles.input, { flex: 1, minWidth: 0 }]} placeholder="Trades (1)" placeholderTextColor="#6B7280" keyboardType="number-pad" value={trades} onChangeText={setTrades} />
           </View>
 
-          <TouchableOpacity
-            style={[styles.startBtn, { backgroundColor: canStart ? accent : 'rgba(255,255,255,0.1)' }]}
-            disabled={!canStart}
-            onPress={save}
-          >
-            <Text style={[styles.startText, { color: canStart ? '#000' : '#6B7280' }]}>CONFIRM &amp; TRADE</Text>
-          </TouchableOpacity>
+          <NeonModalButton label="CONFIRM & TRADE" disabled={!canStart} onPress={save} />
           <Text style={styles.footnote}>Defaults to 0.01 lot · 1 trade. First trades are placed immediately.</Text>
-        </View>
       </View>
-    </Modal>
+    </NeonModal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  card: { width: '100%', maxWidth: 460, alignSelf: 'center', overflow: 'hidden', borderWidth: 1, borderRadius: 20, padding: 18, gap: 12, backgroundColor: '#0D1117' },
+  /* The surface, rim and padding come from NeonModal; this is just the body. */
+  body: { width: '100%', gap: 12 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 14, fontWeight: '800', letterSpacing: 1 },
-  hint: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },
+  hint: { color: INK.secondary, fontSize: 12, lineHeight: 17 },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, color: '#FFFFFF', fontSize: 14, fontWeight: '600', minWidth: 0,
+    backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 999, paddingHorizontal: 18, paddingVertical: 13, color: '#FFFFFF',
+    fontSize: 14, fontWeight: '600', minWidth: 0,
+    ...(Platform.OS === 'web' && ({ outlineStyle: 'none' } as any)),
   },
-  error: { color: '#EF4444', fontSize: 11 },
+  error: { color: '#FF453A', fontSize: 11 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
-  chip: { borderWidth: 1, borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7, backgroundColor: 'rgba(255,255,255,0.04)' },
+  chip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 7, backgroundColor: 'rgba(255,255,255,0.04)' },
   chipText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.4 },
   row: { flexDirection: 'row', gap: 10 },
-  startBtn: { borderRadius: 14, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', marginTop: 2 },
-  startText: { fontSize: 14, fontWeight: '800', letterSpacing: 1 },
-  footnote: { color: '#6B7280', fontSize: 10, textAlign: 'center' },
+  footnote: { color: INK.ghost, fontSize: 10, textAlign: 'center' },
 });

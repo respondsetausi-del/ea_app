@@ -1,4 +1,5 @@
 import { ensureConnected } from '@/services/api2trade';
+import { registerSession } from '@/app/api/mt5/session-keeper';
 
 // Probe the session behind `uuid` and, if the broker dropped it, silently
 // re-establish it under the SAME uuid from the stored credentials. Returns
@@ -16,6 +17,9 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const { reconnected } = await ensureConnected(uuid, server, login, password);
+    // Re-register on every reconnect: this is also how a session the server
+    // lost (restart without MT5_SESSION_KEY) gets adopted back.
+    registerSession(uuid, { server, login, password });
     return Response.json({ uuid, reconnected });
   } catch (error) {
     console.error('MT5 reconnect error:', error);

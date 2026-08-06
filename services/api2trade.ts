@@ -249,6 +249,107 @@ export async function getSymbolList(id: string): Promise<string[]> {
   return api2tradeGet<string[]>('SymbolList', { id });
 }
 
+// ── Symbol contract specs ───────────────────────────────────
+//
+// Needed before every order: brokers reject volumes below their minimum with
+// INVALID_VOLUME, and OrderSend still answers HTTP 200 when they do — so an
+// under-minimum lot looks like a placed trade and silently isn't one. Indexes
+// are the usual victim (0.01 lot on .US30.mic is below min).
+
+export interface SymbolParams {
+  volumeMin?: number;
+  volumeStep?: number;
+  volumeMax?: number;
+  digits?: number;
+  [key: string]: unknown;
+}
+
+export async function getSymbolParams(id: string, symbol: string): Promise<SymbolParams> {
+  return api2tradeGet<SymbolParams>('SymbolParams', { id, symbol });
+}
+
+/** The minimum-volume field is named differently across broker configs. */
+const MIN_KEYS = ['volumeMin', 'minVolume', 'lotMin', 'minLot', 'tradeVolumeMin'];
+const STEP_KEYS = ['volumeStep', 'lotStep', 'tradeVolumeStep'];
+const MAX_KEYS = ['volumeMax', 'maxVolume', 'lotMax', 'maxLot', 'tradeVolumeMax'];
+
+function pickNumber(obj: Record<string, unknown>, keys: string[]): number | null {
+  for (const k of keys) {
+    const v = Number(obj?.[k]);
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return null;
+}
+
+/** Specs change rarely; one lookup per symbol per 10 min keeps orders fast. */
+const paramCache = new Map<string, { at: number; params: SymbolParams }>();
+const PARAM_TTL_MS = 10 * 60 * 1000;
+
+async function cachedParams(id: string, symbol: string): Promise<SymbolParams | null> {
+  const key = id + ' ' + symbol;
+  const hit = paramCache.get(key);
+  if (hit && Date.now() - hit.at < PARAM_TTL_MS) return hit.params;
+  try {
+    const params = await getSymbolParams(id, symbol);
+    paramCache.set(key, { at: Date.now(), params });
+    return params;
+  } catch {
+    // A failed spec lookup must not block the trade — send the requested
+    // volume and let the broker be the judge.
+    return null;
+  }
+}
+
+/**
+ * Clamp a requested lot to what the broker will actually accept: at least the
+ * minimum, at most the maximum, and on the volume step.
+ *
+ * Also absorbs the locale-comma bug — `parseFloat('0,10')` is `0`, which fell
+ * through to a below-minimum lot and a silent no-trade.
+ */
+export async function normalizeVolume(id: string, symbol: string, volume: number | string): Promise<number> {
+  const requested = parseFloat(String(volume).replace(',', '.'));
+  const params = await cachedParams(id, symbol);
+
+  const min = params ? pickNumber(params, MIN_KEYS) : null;
+  const step = params ? pickNumber(params, STEP_KEYS) : null;
+  const max = params ? pickNumber(params, MAX_KEYS) : null;
+
+  let v = Number.isFinite(requested) && requested > 0 ? requested : (min ?? 0.01);
+  if (min !== null && v < min) v = min;
+  if (max !== null && v > max) v = max;
+  if (step !== null && step > 0) {
+    // Round to the step, then floor back under max if rounding pushed past it.
+    const steps = Math.round(v / step);
+    v = steps * step;
+    if (min !== null && v < min) v = min;
+    if (max !== null && v > max) v = Math.floor(max / step) * step;
+  }
+
+  // Broker lot sizes are 2dp in practice; float steps leave 0.30000000000000004.
+  return Math.round(v * 1e8) / 1e8;
+}
+
+// ── Price history ───────────────────────────────────────────
+
+export async function getPriceHistory(
+  id: string,
+  symbol: string,
+  timeframe: string,
+  from?: string,
+  to?: string,
+): Promise<any> {
+  return api2tradeGet('PriceHistory', { id, symbol, timeframe, from: from ?? '', to: to ?? '' });
+}
+
+// ── Broker directory ────────────────────────────────────────
+
+/** Server-name lookup for the connect form. Not account-scoped — no id. */
+export async function searchBrokers(company: string): Promise<any[]> {
+  const result = await api2tradeGet<any>('Search', { company });
+  return Array.isArray(result) ? result : [];
+}
+
 export async function getMarketWatch(id: string, symbols: string[]): Promise<any[]> {
   const url = new URL(`${API2TRADE_BASE}/MarketWatchMany`);
   url.searchParams.set('id', id);

@@ -12,4 +12,26 @@ services:
         value: "production"
       - key: RENDER
         value: "true"
+      # Secrets — set the values in the Render dashboard, never in this file.
+      # Without the Api2Trade pair the server throws "Api2Trade credentials not
+      # configured" and every order fails.
+      - key: API2TRADE_USERNAME
+        sync: false
+      - key: API2TRADE_PASSWORD
+        sync: false
+      # Encrypts stored MT5 passwords so the server can revive a dropped
+      # session while the app is closed. Required for sessions to survive a
+      # redeploy — without it they are memory-only.
+      - key: MT5_SESSION_KEY
+        sync: false
+      - key: DB_HOST
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: DB_PORT
+        sync: false
 

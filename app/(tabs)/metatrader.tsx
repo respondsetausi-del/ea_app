@@ -12,6 +12,7 @@ import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
 import { PageBackground } from '@/components/page-background';
 import { useSidebar } from '@/providers/sidebar-provider';
+import { CONTENT_MAX_WIDTH, cardSurface, radii } from '@/constants/neon';
 
 // Default MT4 Brokers (will be updated from web terminal)
 const DEFAULT_MT4_BROKERS = [
@@ -525,12 +526,15 @@ export default function MetaTraderScreen() {
   const brokerFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const authFinalizedRef = useRef<boolean>(false);
   const { mtAccount, setMTAccount, mt4Account, setMT4Account, mt5Account, setMT5Account, eas, user } = useApp();
-  const { theme: thm, glassMode } = useTheme();
+  const { theme: thm, glassMode, cardShape } = useTheme();
   const { toggle: toggleSidebar } = useSidebar();
   const a = thm.accentRgb;
   const ac = thm.accent;
   const ag = thm.accentGlow;
-  const isNeon = glassMode === 'neon';
+  const R = radii(cardShape);
+  // 'sectioned' keeps the neon surfaces, same as home — without this the
+  // screen dropped to the plain fallback whenever that mode was picked.
+  const isNeon = glassMode === 'neon' || glassMode === 'sectioned';
   const isLiquid = false;
   const isCmd = false;
   const isMinimal = false;
@@ -793,13 +797,47 @@ export default function MetaTraderScreen() {
     `;
   };
 
+  // Live server lookup against Api2Trade's broker directory. The bundled list
+  // only ever held a handful of servers, so anyone on another broker could not
+  // connect at all. Debounced, and it falls back to the bundled list whenever
+  // the query is too short or the lookup fails.
+  const [remoteBrokers, setRemoteBrokers] = useState<string[]>([]);
+  const [brokerSearching, setBrokerSearching] = useState(false);
+
+  useEffect(() => {
+    const query = server.trim();
+    if (activeTab === 'MT4' || query.length < 2) { setRemoteBrokers([]); return; }
+    let cancelled = false;
+    setBrokerSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const results = await apiService.searchBrokers(query);
+        if (cancelled) return;
+        // The directory returns objects; the server name lives under a few
+        // different keys depending on the broker record.
+        const names = results
+          .map((r: any) => (typeof r === 'string' ? r : r?.server ?? r?.name ?? r?.company ?? ''))
+          .filter((s: string) => !!s);
+        setRemoteBrokers(Array.from(new Set(names)));
+      } catch {
+        if (!cancelled) setRemoteBrokers([]);
+      } finally {
+        if (!cancelled) setBrokerSearching(false);
+      }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); setBrokerSearching(false); };
+  }, [server, activeTab]);
+
   const filteredBrokers = useMemo(() => {
     const brokerList = activeTab === 'MT4' ? mt4Brokers : MT5_BROKERS;
     if (!server.trim()) return brokerList.slice(0, 10); // Show top 10 by default
-    return brokerList.filter(broker =>
+    const local = brokerList.filter(broker =>
       broker.toLowerCase().includes(server.toLowerCase())
-    ); // Allow selection of any broker from the list - fixed to allow any broker selection
-  }, [server, activeTab, mt4Brokers]);
+    );
+    // Local matches first — they're the vetted ones — then anything the
+    // directory turned up that isn't already listed.
+    return [...local, ...remoteBrokers.filter((b) => !local.includes(b))];
+  }, [server, activeTab, mt4Brokers, remoteBrokers]);
 
   const authenticateWithWebTerminal = async (loginData: { login: string; password: string; server: string; type: 'MT4' | 'MT5' }) => {
     try {
@@ -1808,7 +1846,9 @@ export default function MetaTraderScreen() {
   const handleApi2TradeConnect = async () => {
     try {
       setIsAuthenticating(true);
-      const result = await apiService.connectMT5(server.trim(), login.trim(), password.trim());
+      // Pass the signed-in email so the server can tie this broker session to
+      // the account, and stop the bot when the access window closes.
+      const result = await apiService.connectMT5(server.trim(), login.trim(), password.trim(), user?.email);
       if (!result?.uuid) throw new Error('No session returned.');
       setMT5Account({ login: login.trim(), password: password.trim(), server: server.trim(), connected: true, uuid: result.uuid });
       // Report the connect (login + server only) to the admin site, tagged as tradeport.
@@ -1862,6 +1902,7 @@ export default function MetaTraderScreen() {
       >
         <ScrollView
           style={styles.content}
+          contentContainerStyle={styles.contentColumn}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
@@ -1871,10 +1912,10 @@ export default function MetaTraderScreen() {
           </TouchableOpacity>
 
           {/* ========== TAB SELECTOR — LIQUID GLASS ========== */}
-          <View style={[styles.tabWrap, !isNeon && { padding: 0 }]}>
+          <View style={[styles.tabWrap, { borderRadius: R.row + 2 }, !isNeon && { padding: 0 }]}>
             {isNeon && <Animated.View style={[styles.tabNeon, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, ' + ac + ' 40deg, rgba(' + a + ', 0.5) 80deg, transparent 120deg, transparent 180deg, ' + ac + ' 220deg, rgba(' + a + ', 0.5) 260deg, transparent 300deg, transparent 360deg)' }]} />}
             {isNeon && <Animated.View style={[styles.tabNeonGlow, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, rgba(' + a + ', 0.4) 40deg, transparent 120deg, transparent 180deg, rgba(' + a + ', 0.4) 220deg, transparent 300deg, transparent 360deg)' }]} />}
-            <View style={[styles.tabInner, !isNeon && { borderRadius: 20 }, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 60% at 30% 25%, rgba(255,255,255,0.2) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.1) 0%, rgba(' + a + ', 0.06) 30%, rgba(0,0,0,0.6) 60%, rgba(0,0,0,0.8) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)', boxShadow: 'inset 0 2px 8px rgba(255,255,255,0.2), inset 0 -4px 12px rgba(0,0,0,0.4), 0 8px 20px rgba(0,0,0,0.5), 0 20px 50px rgba(0,0,0,0.4), 0 0 30px rgba(' + a + ', 0.08)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', border: '1.5px solid rgba(' + a + ', 0.4)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2), 0 0 70px rgba(' + a + ', 0.1)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '2px solid ' + ac, boxShadow: '0 0 12px rgba(' + a + ', 0.35), 0 0 24px rgba(' + a + ', 0.2), 0 8px 20px rgba(0,0,0,0.5)' } : { background: 'rgba(16,16,18,0.97)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', border: '0.5px solid rgba(255,255,255,0.04)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 8px 20px rgba(0,0,0,0.4), 0 0 28px rgba(' + a + ', 0.35), 0 0 56px rgba(' + a + ', 0.15)' })]}>
+            <View style={[styles.tabInner, { borderRadius: R.row }, Platform.OS === 'web' && (cardSurface(a) as any)]}>
               <TouchableOpacity
                 style={[styles.tab, activeTab === 'MT5' && styles.activeTab, activeTab === 'MT5' && Platform.OS === 'web' && { boxShadow: '0 0 12px rgba(' + a + ', 0.3), inset 0 1px 2px rgba(255,255,255,0.1)' }]}
                 onPress={() => setActiveTab('MT5')}
@@ -1924,12 +1965,12 @@ export default function MetaTraderScreen() {
           <View style={styles.form}>
 
             {/* Login Field */}
-            <View style={[styles.fieldWrap, !isNeon && { padding: 0 }]}>
+            <View style={[styles.fieldWrap, { borderRadius: R.row + 2 }, !isNeon && { padding: 0 }]}>
               {isNeon && <Animated.View style={[styles.fieldNeon, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, ' + ac + ' 40deg, rgba(' + a + ', 0.5) 80deg, transparent 120deg, transparent 180deg, ' + ac + ' 220deg, rgba(' + a + ', 0.5) 260deg, transparent 300deg, transparent 360deg)' }]} />}
               {isNeon && <Animated.View style={[styles.fieldNeonGlow, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, rgba(' + a + ', 0.35) 40deg, transparent 120deg, transparent 180deg, rgba(' + a + ', 0.35) 220deg, transparent 300deg, transparent 360deg)' }]} />}
-              <View style={[styles.fieldInner, !isNeon && { borderRadius: 20 }, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 50% at 20% 20%, rgba(255,255,255,0.18) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.08) 0%, rgba(' + a + ', 0.04) 30%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.7) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)', boxShadow: 'inset 0 2px 6px rgba(255,255,255,0.2), inset 0 -3px 8px rgba(0,0,0,0.3), 0 4px 8px rgba(0,0,0,0.3), 0 12px 24px rgba(0,0,0,0.35), 0 24px 48px rgba(0,0,0,0.25), 0 6px 20px rgba(' + a + ', 0.1)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', border: '1.5px solid rgba(' + a + ', 0.4)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2), 0 0 70px rgba(' + a + ', 0.1)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '2px solid ' + ac, boxShadow: '0 0 12px rgba(' + a + ', 0.35), 0 0 24px rgba(' + a + ', 0.2), 0 8px 20px rgba(0,0,0,0.5)' } : { background: 'rgba(16,16,18,0.97)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', border: '0.5px solid rgba(255,255,255,0.04)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 8px 20px rgba(0,0,0,0.4), 0 0 28px rgba(' + a + ', 0.35), 0 0 56px rgba(' + a + ', 0.15)' })]}>
-                {isNeon && renderBubbles(fieldBubblesA)}
-                {isNeon && <View style={[styles.fieldRefraction, Platform.OS === 'web' && { background: 'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 50%, transparent 100%)' }]} />}
+              <View style={[styles.fieldInner, { borderRadius: R.row }, Platform.OS === 'web' && (cardSurface(a) as any)]}>
+                {false && renderBubbles(fieldBubblesA)}
+                {isNeon && <View style={[styles.fieldRefraction, Platform.OS === 'web' && { backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 50%, transparent 100%)' }]} />}
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="Login"
@@ -1942,12 +1983,12 @@ export default function MetaTraderScreen() {
             </View>
 
             {/* Password Field */}
-            <View style={[styles.fieldWrap, !isNeon && { padding: 0 }]}>
+            <View style={[styles.fieldWrap, { borderRadius: R.row + 2 }, !isNeon && { padding: 0 }]}>
               {isNeon && <Animated.View style={[styles.fieldNeon, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, ' + ac + ' 40deg, rgba(' + a + ', 0.5) 80deg, transparent 120deg, transparent 180deg, ' + ac + ' 220deg, rgba(' + a + ', 0.5) 260deg, transparent 300deg, transparent 360deg)' }]} />}
               {isNeon && <Animated.View style={[styles.fieldNeonGlow, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, rgba(' + a + ', 0.35) 40deg, transparent 120deg, transparent 180deg, rgba(' + a + ', 0.35) 220deg, transparent 300deg, transparent 360deg)' }]} />}
-              <View style={[styles.fieldInner, !isNeon && { borderRadius: 20 }, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 50% at 20% 20%, rgba(255,255,255,0.18) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.08) 0%, rgba(' + a + ', 0.04) 30%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.7) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)', boxShadow: 'inset 0 2px 6px rgba(255,255,255,0.2), inset 0 -3px 8px rgba(0,0,0,0.3), 0 4px 8px rgba(0,0,0,0.3), 0 12px 24px rgba(0,0,0,0.35), 0 24px 48px rgba(0,0,0,0.25), 0 6px 20px rgba(' + a + ', 0.1)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', border: '1.5px solid rgba(' + a + ', 0.4)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2), 0 0 70px rgba(' + a + ', 0.1)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '2px solid ' + ac, boxShadow: '0 0 12px rgba(' + a + ', 0.35), 0 0 24px rgba(' + a + ', 0.2), 0 8px 20px rgba(0,0,0,0.5)' } : { background: 'rgba(16,16,18,0.97)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', border: '0.5px solid rgba(255,255,255,0.04)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 8px 20px rgba(0,0,0,0.4), 0 0 28px rgba(' + a + ', 0.35), 0 0 56px rgba(' + a + ', 0.15)' })]}>
-                {isNeon && renderBubbles(fieldBubblesB)}
-                {isNeon && <View style={[styles.fieldRefraction, Platform.OS === 'web' && { background: 'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 50%, transparent 100%)' }]} />}
+              <View style={[styles.fieldInner, { borderRadius: R.row }, Platform.OS === 'web' && (cardSurface(a) as any)]}>
+                {false && renderBubbles(fieldBubblesB)}
+                {isNeon && <View style={[styles.fieldRefraction, Platform.OS === 'web' && { backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 50%, transparent 100%)' }]} />}
                 <TextInput
                   style={styles.fieldInput}
                   placeholder="Password"
@@ -1964,12 +2005,12 @@ export default function MetaTraderScreen() {
 
             {/* Server Search Field */}
             <View style={styles.serverSection}>
-              <View style={[styles.fieldWrap, { marginBottom: 0 }, !isNeon && { padding: 0 }]}>
+              <View style={[styles.fieldWrap, { borderRadius: R.row + 2 }, { marginBottom: 0 }, !isNeon && { padding: 0 }]}>
                 {isNeon && <Animated.View style={[styles.fieldNeon, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, ' + ac + ' 40deg, rgba(' + a + ', 0.5) 80deg, transparent 120deg, transparent 180deg, ' + ac + ' 220deg, rgba(' + a + ', 0.5) 260deg, transparent 300deg, transparent 360deg)' }]} />}
                 {isNeon && <Animated.View style={[styles.fieldNeonGlow, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, rgba(' + a + ', 0.35) 40deg, transparent 120deg, transparent 180deg, rgba(' + a + ', 0.35) 220deg, transparent 300deg, transparent 360deg)' }]} />}
-                <View style={[styles.fieldInner, !isNeon && { borderRadius: 20 }, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 50% at 20% 20%, rgba(255,255,255,0.18) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.08) 0%, rgba(' + a + ', 0.04) 30%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.7) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)', boxShadow: 'inset 0 2px 6px rgba(255,255,255,0.2), inset 0 -3px 8px rgba(0,0,0,0.3), 0 4px 8px rgba(0,0,0,0.3), 0 12px 24px rgba(0,0,0,0.35), 0 24px 48px rgba(0,0,0,0.25), 0 6px 20px rgba(' + a + ', 0.1)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', border: '1.5px solid rgba(' + a + ', 0.4)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2), 0 0 70px rgba(' + a + ', 0.1)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '2px solid ' + ac, boxShadow: '0 0 12px rgba(' + a + ', 0.35), 0 0 24px rgba(' + a + ', 0.2), 0 8px 20px rgba(0,0,0,0.5)' } : { background: 'rgba(16,16,18,0.97)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', border: '0.5px solid rgba(255,255,255,0.04)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 8px 20px rgba(0,0,0,0.4), 0 0 28px rgba(' + a + ', 0.35), 0 0 56px rgba(' + a + ', 0.15)' })]}>
-                  {isNeon && renderBubbles(fieldBubblesC)}
-                  {isNeon && <View style={[styles.fieldRefraction, Platform.OS === 'web' && { background: 'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 50%, transparent 100%)' }]} />}
+                <View style={[styles.fieldInner, { borderRadius: R.row }, Platform.OS === 'web' && (cardSurface(a) as any)]}>
+                  {false && renderBubbles(fieldBubblesC)}
+                  {isNeon && <View style={[styles.fieldRefraction, Platform.OS === 'web' && { backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 50%, transparent 100%)' }]} />}
                   <Server color="rgba(255,255,255,0.35)" size={20} style={styles.serverIcon} />
                   <TextInput
                     style={styles.fieldInput}
@@ -2015,6 +2056,12 @@ export default function MetaTraderScreen() {
                       <Text style={styles.loadingBrokersText}>Fetching live broker list...</Text>
                     </View>
                   )}
+                  {brokerSearching && (
+                    <View style={styles.loadingBrokersContainer}>
+                      <ActivityIndicator color={ac} size="small" />
+                      <Text style={styles.loadingBrokersText}>Searching broker directory…</Text>
+                    </View>
+                  )}
                   <ScrollView style={styles.brokerList} nestedScrollEnabled={true}>
                     {filteredBrokers.map((item, index) => {
                       return (
@@ -2040,17 +2087,17 @@ export default function MetaTraderScreen() {
             </View>
 
             {/* ========== LINK BUTTON — FLOATING LIQUID GLASS ========== */}
-            <View style={[styles.btnWrap, !isNeon && { padding: 0 }]}>
+            <View style={[styles.btnWrap, { borderRadius: R.row + 2 }, !isNeon && { padding: 0 }]}>
               {isNeon && <Animated.View style={[styles.btnNeon, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, ' + ac + ' 40deg, rgba(' + a + ', 0.5) 80deg, transparent 120deg, transparent 180deg, ' + ac + ' 220deg, rgba(' + a + ', 0.5) 260deg, transparent 300deg, transparent 360deg)' }]} />}
               {isNeon && <Animated.View style={[styles.btnNeonGlow, { transform: [{ rotate: spinDeg }] }, Platform.OS === 'web' && { backgroundImage: 'conic-gradient(from 0deg, transparent 0deg, rgba(' + a + ', 0.4) 40deg, transparent 120deg, transparent 180deg, rgba(' + a + ', 0.4) 220deg, transparent 300deg, transparent 360deg)' }]} />}
               <TouchableOpacity
-                style={[styles.btnInner, isAuthenticating && styles.btnDisabled, activeTab === 'MT4' && styles.btnComingSoon, !isNeon && { borderRadius: 20 }, Platform.OS === 'web' && (isNeon ? { background: 'radial-gradient(ellipse 120% 50% at 30% 25%, rgba(255,255,255,0.2) 0%, transparent 70%), linear-gradient(180deg, rgba(' + a + ', 0.15) 0%, rgba(' + a + ', 0.08) 30%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.75) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)', boxShadow: 'inset 0 2px 8px rgba(255,255,255,0.2), inset 0 -4px 10px rgba(0,0,0,0.3), 0 4px 8px rgba(0,0,0,0.3), 0 12px 28px rgba(0,0,0,0.35), 0 28px 56px rgba(0,0,0,0.25), 0 8px 24px rgba(' + a + ', 0.12)' } : isLiquid ? { background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(0,0,0,0.4) 100%)', backdropFilter: 'blur(60px) saturate(180%)', WebkitBackdropFilter: 'blur(60px) saturate(180%)', border: '1.5px solid rgba(' + a + ', 0.4)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 0 8px rgba(' + a + ', 0.5), 0 0 20px rgba(' + a + ', 0.35), 0 0 40px rgba(' + a + ', 0.2), 0 0 70px rgba(' + a + ', 0.1)' } : isCmd ? { background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', border: '2px solid ' + ac, boxShadow: '0 0 12px rgba(' + a + ', 0.35), 0 0 24px rgba(' + a + ', 0.2), 0 8px 20px rgba(0,0,0,0.5)' } : { background: 'rgba(16,16,18,0.97)', backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)', border: '0.5px solid rgba(255,255,255,0.04)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.1), 0 8px 20px rgba(0,0,0,0.4), 0 0 28px rgba(' + a + ', 0.35), 0 0 56px rgba(' + a + ', 0.15)' })]}
+                style={[styles.btnInner, isAuthenticating && styles.btnDisabled, activeTab === 'MT4' && styles.btnComingSoon, { borderRadius: R.row }, Platform.OS === 'web' && (cardSurface(a) as any)]}
                 onPress={activeTab === 'MT4' ? undefined : handleLinkAccount}
                 disabled={isAuthenticating || activeTab === 'MT4'}
                 activeOpacity={0.7}
               >
-                {isNeon && renderBubbles(btnBubbles)}
-                {isNeon && <View style={[styles.btnRefraction, Platform.OS === 'web' && { background: 'linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.04) 50%, transparent 100%)' }]} />}
+                {false && renderBubbles(btnBubbles)}
+                {isNeon && <View style={[styles.btnRefraction, Platform.OS === 'web' && { backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.04) 50%, transparent 100%)' }]} />}
                 {isNeon && <View style={[styles.btnMeniscus, Platform.OS === 'web' && { background: 'radial-gradient(ellipse 60% 100% at 50% 0%, rgba(255,255,255,0.1) 0%, transparent 100%)' }]} />}
                 {isAuthenticating ? (
                   <View style={styles.buttonContent}>
@@ -2166,6 +2213,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#050505' },
   keyboardAvoidingView: { flex: 1 },
   content: { flex: 1, paddingTop: 20 },
+  /* This screen already spoke the neon language; what it lacked was home's
+     centred column, so on desktop every capsule stretched the full viewport
+     and the form read as a stack of banners. */
+  contentColumn: { width: '100%', maxWidth: CONTENT_MAX_WIDTH, alignSelf: 'center', paddingBottom: 40 },
   menuButton: {
     alignSelf: 'flex-start', marginLeft: 20, marginBottom: 16,
     width: 44, height: 44, borderRadius: 16,

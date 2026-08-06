@@ -6,6 +6,7 @@ import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
 import { CandleLogo } from '@/components/candle-logo';
 import { FloatingField } from '@/components/floating-field';
+import { NeonModal, NeonModalButton } from '@/components/neon-modal';
 import { apiService } from '@/services/api';
 
 export default function LicenseScreen() {
@@ -144,17 +145,14 @@ export default function LicenseScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {modalVisible && (
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, Platform.OS === 'web' && { background: 'radial-gradient(ellipse 120% 50% at 20% 20%, rgba(255,255,255,0.15) 0%, transparent 70%), linear-gradient(180deg, rgba(44,44,46,0.85) 0%, rgba(28,28,30,0.95) 100%)', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.25), 0 24px 80px rgba(0,0,0,0.6)' }]}>
-            <Text style={styles.modalTitle}>{modalTitle}</Text>
-            <Text style={styles.modalMsg}>{modalMessage}</Text>
-            <TouchableOpacity style={styles.modalBtn} onPress={() => setModalVisible(false)}>
-              <Text style={[styles.modalBtnTxt, { color: ac }]}>OK</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+      <NeonModal
+        visible={modalVisible}
+        onClose={() => setModalVisible(false)}
+        title={modalTitle}
+        message={modalMessage}
+      >
+        <NeonModalButton label="OK" onPress={() => setModalVisible(false)} />
+      </NeonModal>
     </SafeAreaView>
   );
 }
@@ -240,17 +238,4 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.2)',
     letterSpacing: 0.5,
   },
-  modalOverlay: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 32, zIndex: 9999,
-  },
-  modalCard: {
-    width: '100%', maxWidth: 340, borderRadius: 24, padding: 24,
-    backgroundColor: 'rgba(44, 44, 46, 0.92)', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.15)',
-    ...(Platform.OS !== 'web' && { shadowColor: '#000', shadowOffset: { width: 0, height: 16 }, shadowOpacity: 0.6, shadowRadius: 32, elevation: 20 }),
-  },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#FFFFFF', marginBottom: 10, textAlign: 'center' },
-  modalMsg: { fontSize: 15, color: 'rgba(255,255,255,0.65)', lineHeight: 22, textAlign: 'center', marginBottom: 24 },
-  modalBtn: { paddingVertical: 14, borderRadius: 14, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.1)' },
-  modalBtnTxt: { fontSize: 17, fontWeight: '600' },
 });

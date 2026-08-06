@@ -6,6 +6,7 @@ import { RobotLogo } from '@/components/robot-logo';
 import { CandleLogo } from '@/components/candle-logo';
 import { PageBackground } from '@/components/page-background';
 import QuickConfigModal, { QuickConfig } from '@/components/quick-config-modal';
+import { NeonModal, NeonModalButton } from '@/components/neon-modal';
 import { apiService } from '@/services/api';
 
 import { useApp } from '@/providers/app-provider';
@@ -14,7 +15,7 @@ import { useSidebar } from '@/providers/sidebar-provider';
 import type { EA } from '@/providers/app-provider';
 
 export default function HomeScreen() {
-  const { eas, isFirstTime, setIsFirstTime, removeEA, isBotActive, setBotActive, setActiveEA, user, mt5Account, mt4Account, activateMT5Symbol, deactivateMT5Symbol, mt5Symbols, ensureMT5Connected } = useApp();
+  const { eas, isFirstTime, setIsFirstTime, removeEA, isBotActive, setBotActive, setBotStarting, setActiveEA, user, mt5Account, mt4Account, activateMT5Symbol, deactivateMT5Symbol, mt5Symbols, ensureMT5Connected } = useApp();
   const [scannerGateMsg, setScannerGateMsg] = useState<string | null>(null);
   const [quickStartOpen, setQuickStartOpen] = useState<boolean>(false);
 
@@ -27,33 +28,74 @@ export default function HomeScreen() {
     const count = Math.max(1, Math.min(100, parseInt(cfg.numberOfTrades, 10) || 1));
     let uuid = mt5Account?.uuid;
     if (!symbol || !uuid) return;
-    try { (mt5Symbols || []).forEach((m) => { try { deactivateMT5Symbol(m.symbol); } catch {} }); } catch {}
+
+    // The popup's symbol joins the ones already selected in Trade Config
+    // rather than replacing them — the run trades every selected symbol.
     try { activateMT5Symbol({ symbol, lotSize: String(lot), numberOfTrades: String(count), direction: 'BOTH' }); } catch {}
+
+    const selected = Array.from(new Set([
+      ...(mt5Symbols || []).map((m) => m.symbol),
+      symbol,
+    ].filter(Boolean)));
+
+    // Each symbol keeps the lot and trade count it was configured with;
+    // the popup's values are the fallback for anything unconfigured.
+    const perSymbol: Record<string, { volume?: number; count?: number }> = {};
+    for (const m of mt5Symbols || []) {
+      const v = parseFloat(String(m.lotSize).replace(',', '.'));
+      const c = parseInt(String(m.numberOfTrades), 10);
+      perSymbol[m.symbol] = {
+        volume: isFinite(v) && v > 0 ? v : undefined,
+        count: isFinite(c) && c > 0 ? c : undefined,
+      };
+    }
+    perSymbol[symbol] = { volume: lot, count };
+
     setBotActive(true);
     // Verify the broker still holds this session (and silently reconnect if not)
     // before handing the UUID to the server-side batch engine.
     const fresh = await ensureMT5Connected();
     if (fresh) uuid = fresh;
-    try { await apiService.startBatch(uuid, { symbol, volume: lot, count, intervalMinutes: 10, comment: (eas?.[0]?.name || 'Robot') }); }
-    catch (e: any) { console.error('[quickstart] startBatch error:', e?.message || e); }
-  }, [mt5Account?.uuid, mt5Symbols, activateMT5Symbol, deactivateMT5Symbol, setBotActive, eas, ensureMT5Connected]);
+    try {
+      await apiService.startBatch(uuid, {
+        symbols: selected,
+        volume: lot,
+        count,
+        perSymbol,
+        // The crossover reads M15 closes; polling every 5 minutes samples it
+        // several times per bar without hammering PriceHistory.
+        intervalMinutes: 5,
+        strategy: 'ma-cross',
+        timeframe: 'M15',
+        fastPeriod: 20,
+        slowPeriod: 50,
+        comment: (eas?.[0]?.name || 'Robot'),
+      });
+    } catch (e: any) {
+      console.error('[quickstart] startBatch error:', e?.message || e);
+    }
+  }, [mt5Account?.uuid, mt5Symbols, activateMT5Symbol, setBotActive, eas, ensureMT5Connected]);
 
   const handleToggleBot = useCallback(async () => {
     if (isBotActive) {
+      setBotStarting(false);
       setBotActive(false);
       const uuid = mt5Account?.uuid;
       if (uuid) { try { await apiService.stopBatch(uuid); } catch (e: any) { console.error('[stop] stopBatch error:', e?.message || e); } }
       return;
     }
-    if (!mt5Account?.uuid) { setScannerGateMsg('Connect your MT5 account before starting.'); return; }
+    // Raise the island on the tap. Every path below either takes the start
+    // forward or clears this again, so it can't be left hanging.
+    setBotStarting(true);
+    if (!mt5Account?.uuid) { setBotStarting(false); setScannerGateMsg('Connect your MT5 account before starting.'); return; }
     // Stored connected flag is not proof the broker still holds the session —
     // probe/reconnect once, and only block if the reconnect genuinely fails.
     if (!mt5Account?.connected) {
       const fresh = await ensureMT5Connected();
-      if (!fresh) { setScannerGateMsg('Connect your MT5 account before starting.'); return; }
+      if (!fresh) { setBotStarting(false); setScannerGateMsg('Connect your MT5 account before starting.'); return; }
     }
     setQuickStartOpen(true); // always show the popup on start
-  }, [isBotActive, mt5Account?.uuid, mt5Account?.connected, setBotActive, ensureMT5Connected]);
+  }, [isBotActive, mt5Account?.uuid, mt5Account?.connected, setBotActive, setBotStarting, ensureMT5Connected]);
 
   // Scanner requires a connected MT4 or MT5 account. If neither is connected,
   // show the SETUP REQUIRED popup instead of opening the scanner.
@@ -597,62 +639,39 @@ export default function HomeScreen() {
 
       </ScrollView>
 
-      {/* ========== REMOVE WARNING MODAL — GLASSMORPHISM ========== */}
-      {showRemoveWarning && (
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, Platform.OS === 'web' && { background: '#0c0c0c', backdropFilter: 'blur(80px) saturate(200%)', WebkitBackdropFilter: 'blur(80px) saturate(200%)', boxShadow: 'inset 0 0.5px 0 rgba(255,255,255,0.25), 0 24px 80px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(255,255,255,0.08)' }]}>
-            <Text style={styles.modalTitle}>Remove EA</Text>
-            <Text style={styles.modalMessage}>Are you sure you want to remove {primaryEA?.name || 'this EA'}? This action cannot be undone.</Text>
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.modalCancel} onPress={() => setShowRemoveWarning(false)}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalConfirm, { backgroundColor: 'rgba(220, 38, 38, 0.8)' }]} onPress={confirmRemoveBot}>
-                <Text style={styles.modalConfirmText}>Remove</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
+      {/* ========== REMOVE WARNING MODAL ========== */}
+      <NeonModal
+        visible={showRemoveWarning}
+        onClose={() => setShowRemoveWarning(false)}
+        icon={<Trash2 color={theme.accent} size={26} />}
+        title="REMOVE EA"
+        message={`Are you sure you want to remove ${primaryEA?.name || 'this EA'}? This action cannot be undone.`}
+      >
+        <NeonModalButton label="REMOVE" kind="danger" onPress={confirmRemoveBot} />
+        <NeonModalButton label="Cancel" kind="ghost" onPress={() => setShowRemoveWarning(false)} />
+      </NeonModal>
 
       {/* Scanner access gate — shows when user taps CHART SCANNER without a connected MT4/MT5 account */}
-      <Modal
+      <NeonModal
         visible={!!scannerGateMsg}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setScannerGateMsg(null)}
+        onClose={() => setScannerGateMsg(null)}
+        icon={<Shield color={theme.accent} size={26} />}
+        title="SETUP REQUIRED"
+        message={scannerGateMsg ?? ''}
       >
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
-          <View style={{ backgroundColor: '#0A0F1C', borderRadius: 20, borderWidth: 1, borderColor: theme.accent + '66', padding: 28, width: '100%', maxWidth: 380, alignItems: 'center', ...(Platform.OS === 'web' ? { boxShadow: `0 0 30px 8px ${theme.accent}33` } as any : {}) }}>
-            <View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 2, borderColor: theme.accent, backgroundColor: theme.accent + '22', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-              <Shield color={theme.accent} size={28} />
-            </View>
-            <Text style={{ color: '#FFFFFF', fontSize: 18, fontWeight: '800', letterSpacing: 1, marginBottom: 8, textAlign: 'center' }}>SETUP REQUIRED</Text>
-            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 24 }}>{scannerGateMsg}</Text>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => { setScannerGateMsg(null); router.push('/(tabs)/metatrader'); }}
-              style={{ backgroundColor: theme.accent, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32, width: '100%', alignItems: 'center', marginBottom: 10 }}
-            >
-              <Text style={{ color: '#000000', fontSize: 14, fontWeight: '800', letterSpacing: 1 }}>CONNECT ACCOUNT</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => setScannerGateMsg(null)}
-              style={{ paddingVertical: 10 }}
-            >
-              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, fontWeight: '600' }}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        <NeonModalButton
+          label="CONNECT ACCOUNT"
+          onPress={() => { setScannerGateMsg(null); router.push('/(tabs)/metatrader'); }}
+        />
+        <NeonModalButton label="Cancel" kind="ghost" onPress={() => setScannerGateMsg(null)} />
+      </NeonModal>
 
       {/* Quick trade setup — opens every time Start is pressed (MT5 connected). */}
       <QuickConfigModal
         visible={quickStartOpen}
         uuid={mt5Account?.uuid}
         accent={theme.accent}
-        onClose={() => setQuickStartOpen(false)}
+        onClose={() => { setQuickStartOpen(false); setBotStarting(false); }}
         onConfirm={handleQuickStartConfirm}
       />
     </SafeAreaView>
@@ -1350,30 +1369,4 @@ const styles = StyleSheet.create({
   },
 
   /* ========== REMOVE WARNING MODAL ========== */
-  modalOverlay: {
-    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
-    padding: 32, zIndex: 9999,
-  },
-  modalCard: {
-    width: '100%', maxWidth: 340, borderRadius: 24, padding: 24,
-    backgroundColor: 'rgba(44, 44, 46, 0.92)',
-    borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.15)',
-    ...(Platform.OS !== 'web' && {
-      shadowColor: '#000', shadowOffset: { width: 0, height: 16 },
-      shadowOpacity: 0.6, shadowRadius: 32, elevation: 20,
-    }),
-  },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: '#FFFFFF', marginBottom: 10, textAlign: 'center' },
-  modalMessage: { fontSize: 15, color: 'rgba(255,255,255,0.65)', lineHeight: 22, textAlign: 'center', marginBottom: 24 },
-  modalActions: { flexDirection: 'row', gap: 12 },
-  modalCancel: {
-    flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-  },
-  modalCancelText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF' },
-  modalConfirm: {
-    flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: 'center',
-  },
-  modalConfirmText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF' },
 });

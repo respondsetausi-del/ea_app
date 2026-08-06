@@ -140,6 +140,7 @@ function RootLayoutNav() {
     isFirstTime,
     eas,
     isBotActive,
+    isBotStarting,
     newSignal,
     dismissNewSignal,
     tradingSignal,
@@ -213,9 +214,10 @@ function RootLayoutNav() {
         <Stack.Screen name="license" />
         <Stack.Screen name="trade-config" options={{ presentation: "modal" }} />
       </Stack>
-      {/* Always render DynamicIsland when conditions are met, regardless of app state */}
+      {/* Shows while the bot runs, and from the moment TRADE is pressed so the
+          island is up during the start rather than appearing after it. */}
       <DynamicIsland
-        visible={!isFirstTime && eas.length > 0 && isBotActive}
+        visible={!isFirstTime && eas.length > 0 && (isBotActive || isBotStarting)}
         newSignal={newSignal}
         onSignalDismiss={dismissNewSignal}
       />

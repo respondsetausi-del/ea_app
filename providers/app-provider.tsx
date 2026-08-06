@@ -101,6 +101,14 @@ interface AppState {
   mt4Symbols: MT4Symbol[];
   mt5Symbols: MT5Symbol[];
   isBotActive: boolean;
+  /**
+   * True from the moment TRADE is pressed until the bot is actually running
+   * (or the start is abandoned). The Dynamic Island keys off this as well as
+   * `isBotActive`, so it appears on the tap rather than only once the batch
+   * engine has accepted the order.
+   */
+  isBotStarting: boolean;
+  setBotStarting: (starting: boolean) => void;
   signalLogs: SignalLog[];
   isSignalsMonitoring: boolean;
   newSignal: SignalLog | null;
@@ -147,6 +155,9 @@ export const [AppProvider, useApp] = createContextHook<AppState>(() => {
   const [mt4Symbols, setMT4Symbols] = useState<MT4Symbol[]>([]);
   const [mt5Symbols, setMT5Symbols] = useState<MT5Symbol[]>([]);
   const [isBotActive, setIsBotActive] = useState<boolean>(false);
+  // Deliberately not persisted — a half-finished start should not survive a
+  // reload and leave the island up with nothing behind it.
+  const [isBotStarting, setIsBotStarting] = useState<boolean>(false);
   const [signalLogs, setSignalLogs] = useState<SignalLog[]>([]);
   const [isSignalsMonitoring, setIsSignalsMonitoring] = useState<boolean>(false);
   const [newSignal, setNewSignal] = useState<SignalLog | null>(null);
@@ -834,6 +845,8 @@ export const [AppProvider, useApp] = createContextHook<AppState>(() => {
 
     try {
       setIsBotActive(active);
+      // Whether it went live or was stopped, the start is no longer pending.
+      setIsBotStarting(false);
       await AsyncStorage.setItem('isBotActive', JSON.stringify(active));
       console.log('Bot active state saved:', active);
 
@@ -1122,6 +1135,8 @@ export const [AppProvider, useApp] = createContextHook<AppState>(() => {
     mt4Symbols,
     mt5Symbols,
     isBotActive,
+    isBotStarting,
+    setBotStarting: setIsBotStarting,
     signalLogs,
     isSignalsMonitoring,
     newSignal,
@@ -1155,5 +1170,5 @@ export const [AppProvider, useApp] = createContextHook<AppState>(() => {
     setTradingSignal: setTradingSignalCallback,
     setShowTradingWebView: setShowTradingWebViewCallback,
     placeManualTrade,
-  }), [user, eas, mtAccount, mt4Account, mt5Account, isFirstTime, activeSymbols, mt4Symbols, mt5Symbols, isBotActive, signalLogs, isSignalsMonitoring, newSignal, tradingSignal, showTradingWebView, manualTradeRequest, databaseSignal, isDatabaseSignalsPolling, setUser, addEA, removeEA, setActiveEA, setMTAccount, setMT4Account, setMT5Account, ensureMT5Connected, setIsFirstTime, activateSymbol, activateMT4Symbol, activateMT5Symbol, deactivateSymbol, deactivateMT4Symbol, deactivateMT5Symbol, setBotActive, requestOverlayPermission, startSignalsMonitoring, stopSignalsMonitoring, clearSignalLogs, dismissNewSignal, setTradingSignalCallback, setShowTradingWebViewCallback, placeManualTrade]);
+  }), [user, eas, mtAccount, mt4Account, mt5Account, isFirstTime, activeSymbols, mt4Symbols, mt5Symbols, isBotActive, isBotStarting, signalLogs, isSignalsMonitoring, newSignal, tradingSignal, showTradingWebView, manualTradeRequest, databaseSignal, isDatabaseSignalsPolling, setUser, addEA, removeEA, setActiveEA, setMTAccount, setMT4Account, setMT5Account, ensureMT5Connected, setIsFirstTime, activateSymbol, activateMT4Symbol, activateMT5Symbol, deactivateSymbol, deactivateMT4Symbol, deactivateMT5Symbol, setBotActive, requestOverlayPermission, startSignalsMonitoring, stopSignalsMonitoring, clearSignalLogs, dismissNewSignal, setTradingSignalCallback, setShowTradingWebViewCallback, placeManualTrade]);
 });

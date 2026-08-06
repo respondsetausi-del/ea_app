@@ -50,16 +50,21 @@ export interface Account {
   status: string;
   paid: boolean;
   used: boolean;
+  /** Access window has ended. Distinct from never having been approved. */
   expired?: boolean;
+  /** ISO timestamp the window closes. null = no expiry (grandfathered user). */
   expiry_date?: string | null;
+  /** Whole days left, rounded up. null when there's no deadline. */
+  daysRemaining?: number | null;
   device_mismatch?: boolean;
   /**
    * Where this client sits in the mentor → super-admin approval flow.
    * 'unknown'  — nobody has added them yet (send to checkout)
    * 'pending'  — a mentor added them, awaiting super-admin approval
    * 'approved' — cleared to use the app
+   * 'expired'  — was approved, but the access window has closed
    */
-  approvalStatus?: 'unknown' | 'pending' | 'approved' | 'rejected';
+  approvalStatus?: 'unknown' | 'pending' | 'approved' | 'rejected' | 'expired';
   hasLicense?: boolean;
   /** Super-admin switch: when false, checkout is skipped entirely. */
   requirePayment?: boolean;
@@ -156,6 +161,7 @@ class ApiService {
     let data: {
       found?: boolean; status?: string; authorized?: boolean;
       paid?: boolean; hasLicense?: boolean; requirePayment?: boolean;
+      expired?: boolean; expiresAt?: string | null; daysRemaining?: number | null;
     } = {};
     try {
       data = await res.json();
@@ -172,8 +178,11 @@ class ApiService {
       // `paid` is now informational only — approval is the gate.
       paid: !!data.paid,
       used: false,
-      expired: false,
-      expiry_date: null,
+      // Real values now: access runs for a fixed window from approval, and the
+      // dashboard is the authority on when it ends.
+      expired: !!data.expired,
+      expiry_date: data.expiresAt ?? null,
+      daysRemaining: data.daysRemaining ?? null,
       device_mismatch: false,
       approvalStatus: (data.status as Account['approvalStatus']) || 'unknown',
       hasLicense: !!data.hasLicense,
@@ -275,8 +284,13 @@ class ApiService {
   }
 
   // ── Api2Trade MT5 (calls our Bun server; BASE_URL is same-origin on web) ──
-  async connectMT5(server: string, login: string, password: string): Promise<{ uuid: string; message: string }> {
-    const res = await fetch(`${BASE_URL}/api/mt5/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server, login, password }) });
+  /**
+   * `email` ties the broker session to the app account, which is what lets the
+   * server enforce the access window on a bot that keeps running with the app
+   * closed. Optional so an older client still connects.
+   */
+  async connectMT5(server: string, login: string, password: string, email?: string): Promise<{ uuid: string; message: string }> {
+    const res = await fetch(`${BASE_URL}/api/mt5/connect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server, login, password, email }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || 'Connection failed');
     return data;
@@ -310,12 +324,62 @@ class ApiService {
     return Array.isArray(data) ? data : [];
   }
 
+  async getMT5Quote(uuid: string, symbol: string): Promise<any> {
+    const res = await fetch(`${BASE_URL}/api/mt5/symbols?id=${encodeURIComponent(uuid)}&action=quote&symbol=${encodeURIComponent(symbol)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to fetch quote');
+    return data;
+  }
+
   async getMT5Quotes(uuid: string, symbols: string[]): Promise<any[]> {
     if (!symbols.length) return [];
     const qs = symbols.map((s) => `symbols=${encodeURIComponent(s)}`).join('&');
     const res = await fetch(`${BASE_URL}/api/mt5/symbols?id=${encodeURIComponent(uuid)}&action=quotes&${qs}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || 'Failed to fetch quotes');
+    return Array.isArray(data) ? data : [];
+  }
+
+  async getMT5MarketWatch(uuid: string, symbols: string[]): Promise<any[]> {
+    if (!symbols.length) return [];
+    const qs = symbols.map((s) => `symbols=${encodeURIComponent(s)}`).join('&');
+    const res = await fetch(`${BASE_URL}/api/mt5/symbols?id=${encodeURIComponent(uuid)}&action=watch&${qs}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to fetch market watch');
+    return Array.isArray(data) ? data : [];
+  }
+
+  /** Broker contract specs — min/step/max lot. Orders are clamped server-side
+   *  too; this is for showing the real minimum in the UI. */
+  async getMT5SymbolParams(uuid: string, symbol: string): Promise<any> {
+    const res = await fetch(`${BASE_URL}/api/mt5/symbols?id=${encodeURIComponent(uuid)}&action=params&symbol=${encodeURIComponent(symbol)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to fetch symbol params');
+    return data;
+  }
+
+  async getMT5Orders(uuid: string, type: 'open' | 'closed' | 'all' = 'open'): Promise<any> {
+    const res = await fetch(`${BASE_URL}/api/mt5/orders?id=${encodeURIComponent(uuid)}&type=${type}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to fetch orders');
+    return data;
+  }
+
+  async getMT5History(uuid: string, symbol: string, timeframe = 'M1', from?: string, to?: string): Promise<any> {
+    const qs = new URLSearchParams({ id: uuid, symbol, timeframe });
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    const res = await fetch(`${BASE_URL}/api/mt5/history?${qs.toString()}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Failed to fetch price history');
+    return data;
+  }
+
+  /** Live broker/server lookup for the connect form. */
+  async searchBrokers(company: string): Promise<any[]> {
+    const res = await fetch(`${BASE_URL}/api/mt5/brokers?company=${encodeURIComponent(company)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || 'Broker search failed');
     return Array.isArray(data) ? data : [];
   }
 
@@ -326,7 +390,26 @@ class ApiService {
     return data;
   }
 
-  async startBatch(uuid: string, opts: { symbol: string; volume: number; count: number; intervalMinutes: number; comment?: string }): Promise<any> {
+  /**
+   * Start the server-side loop over one or more symbols.
+   *
+   * Defaults to the EMA-crossover strategy: each cycle reads every symbol's
+   * direction from its own price history and reconciles the book to match.
+   */
+  async startBatch(uuid: string, opts: {
+    symbols: string[];
+    volume: number;
+    count: number;
+    intervalMinutes: number;
+    comment?: string;
+    strategy?: 'ma-cross' | 'flip';
+    timeframe?: string;
+    fastPeriod?: number;
+    slowPeriod?: number;
+    minSeparationPct?: number;
+    /** Per-symbol lot / trade-count overrides from Trade Config. */
+    perSymbol?: Record<string, { volume?: number; count?: number }>;
+  }): Promise<any> {
     const res = await fetch(`${BASE_URL}/api/mt5/batch/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uuid, ...opts }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || 'Failed to start');
