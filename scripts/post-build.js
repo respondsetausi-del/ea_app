@@ -85,6 +85,17 @@ const indexPath = path.join(distPath, 'index.html');
 if (fs.existsSync(indexPath)) {
   let html = fs.readFileSync(indexPath, 'utf8');
 
+  // Expo emits its own `width=device-width, initial-scale=1, shrink-to-fit=no`
+  // viewport. Ours is injected right after <head>, so Expo's came LATER and
+  // won — which is why the zoom guard (and viewport-fit=cover) never actually
+  // applied on device. Strip every existing viewport tag first so the one
+  // added below is the only one in the document.
+  const strippedViewports = (html.match(/\s*<meta\s+name=["']viewport["'][^>]*>/gi) || []).length;
+  html = html.replace(/\s*<meta\s+name=["']viewport["'][^>]*>/gi, '');
+  if (strippedViewports) {
+    console.log(`  removed ${strippedViewports} pre-existing viewport tag(s)`);
+  }
+
   // Add manifest link
   if (!html.includes('manifest.json')) {
     html = html.replace(
@@ -108,19 +119,6 @@ if (fs.existsSync(indexPath)) {
   <meta name="msapplication-TileImage" content="/assets/images/icon.png">
   <meta name="theme-color" content="#000000">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <style>
-    body {
-      background-color: #000000 !important;
-    }
-    /* Ensure status bar area is black */
-    @media screen and (max-width: 768px) {
-      body {
-        padding-top: env(safe-area-inset-top);
-        background-color: #000000 !important;
-      }
-    }
-  </style>
   <script>
     // No service worker is registered. Older builds shipped a caching SW that
     // kept serving stale HTML/JS across deploys. This script removes any
@@ -164,8 +162,68 @@ if (fs.existsSync(indexPath)) {
     );
   }
 
+  // The single source of truth for the viewport. Added outside the manifest
+  // guard above so a re-run — which skips that block — still leaves exactly one
+  // viewport tag rather than none, having just stripped Expo's.
+  //
+  // maximum-scale + user-scalable=no are what stop the page drifting sideways
+  // on iOS: focusing an input under 16px auto-zooms, and a home-screen PWA has
+  // no way to zoom back out, so the viewport stays wider than the screen and
+  // the whole app scrolls left/right from then on.
+  html = html.replace(
+    '<head>',
+    `<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">`,
+  );
+
+  // Layout guards. Also kept outside the manifest block, for the same reason:
+  // that block is skipped whenever index.html already mentions manifest.json,
+  // which silently dropped these on any re-run.
+  if (!html.includes('ea-naptune-layout-guards')) {
+    html = html.replace(
+      '</head>',
+      `  <style id="ea-naptune-layout-guards">
+    html, body {
+      background-color: #000000 !important;
+      /* Nothing may widen the page: the viewport tag stops the zoom, this
+         stops any stray element (the off-screen sidebar, a wide row) from
+         making the document itself scrollable sideways. */
+      max-width: 100%;
+      overflow-x: hidden;
+      overscroll-behavior-x: none;
+    }
+    @media screen and (max-width: 768px) {
+      body {
+        padding-top: env(safe-area-inset-top);
+        background-color: #000000 !important;
+      }
+    }
+    /* iOS zooms the page when a focused field's text is under 16px. This fixes
+       the cause rather than only suppressing the symptom, which matters because
+       user-scalable=no is ignored on recent iOS.
+
+       !important is load-bearing: react-native-web sets font sizes through
+       generated atomic classes (.r-fontSize-*), which outrank a bare element
+       selector, so without it this rule loses on every field it exists for.
+       max() keeps larger designed sizes intact and only raises the small ones. */
+    input, select, textarea {
+      font-size: max(16px, 1em) !important;
+    }
+  </style>
+</head>`,
+    );
+  }
+
+  const viewportCount = (html.match(/<meta\s+name=["']viewport["']/gi) || []).length;
+  if (viewportCount !== 1) {
+    // Two tags means the later one silently wins and this fix is inert — the
+    // exact bug being repaired here, so fail the build rather than ship it.
+    console.error(`post-build: expected exactly 1 viewport tag, found ${viewportCount}`);
+    process.exit(1);
+  }
+
   fs.writeFileSync(indexPath, html);
-  console.log('Updated index.html with PWA meta tags');
+  console.log('Updated index.html with PWA meta tags (1 viewport tag)');
 }
 
 console.log('PWA setup completed successfully!');
