@@ -17,7 +17,16 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // build time; falls back to the current link (a public URL, safe to embed).
 // The link's post-payment redirect must point to <app origin>/paid.
 const STRIPE_BUY_URL =
-  process.env.EXPO_PUBLIC_STRIPE_BUY_URL || 'https://buy.stripe.com/dRm14n16e13nf0G19Re3e0U';
+  process.env.EXPO_PUBLIC_STRIPE_BUY_URL || 'https://buy.stripe.com/9B65kDbKSbI1dWC8Cje3e16';
+
+// What the user is told they'll pay, and for how long.
+//
+// DISPLAY ONLY — the amount actually charged is set on the Stripe product, and
+// the window is app_settings.access_days on the dashboard. Nothing here can
+// change either, so these must be kept in sync by hand. They're env-driven so
+// a price change is a redeploy rather than a code edit.
+const PRICE_LABEL = process.env.EXPO_PUBLIC_PRICE_LABEL || 'R550';
+const PRICE_PERIOD = process.env.EXPO_PUBLIC_PRICE_PERIOD || '30 days';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState<string>('');
@@ -103,9 +112,10 @@ export default function LoginScreen() {
             : null;
           setModalTitle('Access expired');
           setModalMessage(
-            ended
-              ? `Your access ended on ${ended}. Renew to continue trading.`
-              : 'Your access period has ended. Renew to continue trading.',
+            (ended
+              ? `Your access ended on ${ended}. `
+              : 'Your access period has ended. ')
+            + `Renew for ${PRICE_LABEL} to continue trading.`,
           );
           setModalVisible(true);
           return;
@@ -251,6 +261,14 @@ export default function LoginScreen() {
                   <Text style={styles.proceedButtonText}>Continue</Text>
                 )}
               </TouchableOpacity>
+
+              {/* Continue sends an unrecognised email straight to Stripe, so
+                  the amount has to be visible before that — otherwise the
+                  first time anyone sees a price is on the payment page. */}
+              <Text style={styles.priceNote}>
+                <Text style={[styles.priceAmount, { color: ac }]}>{PRICE_LABEL}</Text>
+                {` for ${PRICE_PERIOD} · existing users just sign in`}
+              </Text>
             </View>
 
             <Text style={styles.footer}>Powered by EA NAPTUNE</Text>
@@ -476,6 +494,17 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: 'rgba(255, 255, 255, 0.2)',
     letterSpacing: 0.5,
+  },
+  priceNote: {
+    marginTop: 14,
+    fontSize: 12,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.45)',
+    textAlign: 'center',
+    letterSpacing: 0.2,
+  },
+  priceAmount: {
+    fontWeight: '800',
   },
   buyButton: {
     marginTop: 12,
