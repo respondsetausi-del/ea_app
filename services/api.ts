@@ -283,40 +283,6 @@ class ApiService {
     };
   }
 
-  /**
-   * Exchange a Stripe Checkout Session id for the licence key that payment
-   * issued, so a buyer never has to be told a key out of band.
-   *
-   * `pending` means the webhook hasn't landed yet — Stripe redirects the
-   * browser and posts the webhook independently, so arriving first is normal.
-   * The caller should retry before giving up.
-   */
-  async claimLicense(sessionId: string): Promise<{
-    claimed: boolean; pending?: boolean; needsKey?: boolean;
-    email?: string; license_key?: string; error?: string;
-  }> {
-    const id = sessionId?.trim();
-    if (!id) return { claimed: false, error: 'No session' };
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
-    try {
-      const res = await fetch(`${DASHBOARD_API}/api/v1/claim-license`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: id }),
-        signal: controller.signal,
-      });
-      return await res.json();
-    } catch (e) {
-      console.error('Licence claim error:', e);
-      // A network blip is not a verdict — let the caller keep polling.
-      return { claimed: false, pending: true };
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
   // ── Api2Trade MT5 (calls our Bun server; BASE_URL is same-origin on web) ──
   /**
    * `email` ties the broker session to the app account, which is what lets the
