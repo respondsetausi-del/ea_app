@@ -30,7 +30,6 @@ const PRICE_PERIOD = process.env.EXPO_PUBLIC_PRICE_PERIOD || '30 days';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState<string>('');
-  const [mentorCode, setMentorCode] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isPaymentProcessing, setIsPaymentProcessing] = useState<boolean>(false);
   const [modalVisible, setModalVisible] = useState<boolean>(false);
@@ -171,14 +170,8 @@ export default function LoginScreen() {
     if (!em) { Alert.alert('Error', 'Enter your email first'); return; }
     if (!em.includes('@')) { Alert.alert('Error', 'Please enter a valid email address'); return; }
     if (!STRIPE_BUY_URL) { Alert.alert('Unavailable', 'Payments are not set up yet. Please contact your provider.'); return; }
-    // client_reference_id is the only thing Stripe carries through checkout
-    // and hands back on the webhook, so it is how a payment gets attributed to
-    // the mentor who made the sale. Without it every buyer resolves to the
-    // public flagship bot.
-    const code = mentorCode.trim();
-    const url = `${STRIPE_BUY_URL}?prefilled_email=${encodeURIComponent(em)}`
-      + (code ? `&client_reference_id=${encodeURIComponent(code)}` : '');
-    try { await AsyncStorage.setItem('pendingBuy', JSON.stringify({ email: em, mentorCode: code })); } catch {}
+    const url = `${STRIPE_BUY_URL}?prefilled_email=${encodeURIComponent(em)}`;
+    try { await AsyncStorage.setItem('pendingBuy', JSON.stringify({ email: em })); } catch {}
     if (Platform.OS === 'web') {
       (window as any).location.href = url;
     } else {
@@ -246,20 +239,6 @@ export default function LoginScreen() {
                 onChangeText={setEmail}
                 accentRgb={a}
                 keyboardType="email-address"
-              />
-
-              {/* Which mentor sold this. One Stripe link serves everyone, so
-                  unless the buyer carries their mentor's code through checkout
-                  there is nothing on the payment tying them to that mentor,
-                  and they get attached to the public bot instead. Optional —
-                  blank is the correct answer for someone buying direct. */}
-              <FloatingField
-                testID="login-mentor-code"
-                label="Mentor code (optional)"
-                value={mentorCode}
-                onChangeText={setMentorCode}
-                accentRgb={a}
-                autoCapitalize="characters"
               />
 
               <TouchableOpacity
