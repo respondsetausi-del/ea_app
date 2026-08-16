@@ -49,8 +49,20 @@ export default function LicenseScreen() {
         return;
       }
       if (authResponse.message !== 'accept' || !authResponse.data) {
-        setModalTitle('Invalid License');
-        setModalMessage('The license key does not exist or authentication failed.');
+        // The server says why — a deactivated licence, a key registered to a
+        // different email, a bot that has been removed. Showing "does not
+        // exist" for all of them sent people back to their mentor with the
+        // wrong problem.
+        const reason = authResponse.error?.trim();
+        const deactivated = /deactivat/i.test(reason || '');
+        setModalTitle(deactivated ? 'License Deactivated' : 'Invalid License');
+        setModalMessage(
+          reason
+            ? deactivated
+              ? `${reason} Please contact your mentor.`
+              : reason
+            : 'The license key does not exist or authentication failed.',
+        );
         setModalVisible(true);
         return;
       }

@@ -137,6 +137,12 @@ export interface LicenseData {
 export interface LicenseAuthResponse {
   message: 'accept' | 'used' | 'error';
   data?: LicenseData;
+  /**
+   * Why it failed, in words the user can act on. The server already tells a
+   * deactivated licence apart from an unknown key and from a missing bot; this
+   * carries that through instead of showing one message for all of them.
+   */
+  error?: string;
 }
 
 // ── API Service ─────────────────────────────────────────────
@@ -238,23 +244,29 @@ class ApiService {
     } catch (networkError) {
       clearTimeout(timeout);
       console.error('License auth network error:', networkError);
-      return { message: 'error' };
+      return { message: 'error', error: 'Could not reach the licensing server. Check your connection and try again.' };
     }
     clearTimeout(timeout);
 
     let site: {
       user_authorized?: boolean;
+      error?: string;
       ea?: { id: string; name: string; description: string; mentor_id: string; image_url: string | null };
       branding?: { app_name?: string; glow_color?: string; logo_url?: string | null; robot_image_url?: string | null; tagline?: string | null } | null;
     };
     try {
       site = await res.json();
     } catch {
-      return { message: 'error' };
+      return { message: 'error', error: 'The licensing server returned something unreadable. Please try again.' };
     }
 
     if (!site?.user_authorized || !site?.ea) {
-      return { message: 'error' };
+      // Pass the server's reason through. It knows whether the key is unknown,
+      // belongs to a different email, has been deactivated, or points at a bot
+      // that is gone — and each of those needs a different response from the
+      // user. Collapsing them into one message sent people to their mentor
+      // saying "it says my key doesn't exist" when the key was fine.
+      return { message: 'error', error: site?.error };
     }
 
     const ea = site.ea;
