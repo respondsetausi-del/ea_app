@@ -227,8 +227,11 @@ class ApiService {
 
   async authenticateLicense(licenseBody: LicenseAuthBody): Promise<LicenseAuthResponse> {
     const licenceKey = licenseBody?.licence?.trim();
-    const email = licenseBody?.email?.trim().toLowerCase();
-    if (!licenceKey || !email) return { message: 'error' };
+    // Sent for the record, not for matching — the key identifies the robot, and
+    // the server no longer checks the address against it. Requiring one here
+    // blocked activation outright whenever the app had no signed-in email.
+    const email = licenseBody?.email?.trim().toLowerCase() || '';
+    if (!licenceKey) return { message: 'error', error: 'Enter your license key.' };
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);
@@ -278,7 +281,7 @@ class ApiService {
     return {
       message: 'accept',
       data: {
-        user: email,
+        user: email || ea.name,
         status: 'active',
         expires: '',
         key: licenceKey,
