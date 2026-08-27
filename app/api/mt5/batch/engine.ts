@@ -63,6 +63,22 @@ let tableReady = false;
 // Opt in locally with BATCH_PERSIST=1 (with your own DB) if you must.
 const PERSIST = process.env.RENDER === 'true' || process.env.BATCH_PERSIST === '1';
 
+// Which app owns a persisted flight.
+//
+// _db.ts falls back to a hard-coded MySQL host and the `eaconverter` database
+// when DB_* is unset, so any other deployment built from this codebase lands in
+// the same database and the same tp_mt5_batches table. Resume used to read
+// every row in it, which means one instance could pick up another's flights and
+// trade symbols that were never configured here.
+const APP_ID = process.env.BATCH_APP_ID || 'ea_naptune';
+
+// A live flight rewrites its row every cycle (default 5 minutes), so a row that
+// has not been touched for hours belongs to a bot that is no longer running.
+// Without this, a flight whose owner closed the app without pressing Stop sat
+// in the table indefinitely and started trading again on the next restart —
+// with whatever symbols were configured back then.
+const MAX_RESUME_AGE_HOURS = Number(process.env.BATCH_MAX_RESUME_AGE_HOURS || 6);
+
 // ── Persistence (best-effort — the loop still runs in-memory if the DB is down) ──
 async function ensureTable(): Promise<void> {
   if (tableReady) return;
@@ -74,6 +90,11 @@ async function ensureTable(): Promise<void> {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`,
   );
+  // Added after the table shipped, so tolerate it already existing.
+  try {
+    await pool.query('ALTER TABLE tp_mt5_batches ADD COLUMN app VARCHAR(40) NULL');
+    console.log('[Batch:srv] added app column to tp_mt5_batches');
+  } catch { /* already there */ }
   tableReady = true;
 }
 
@@ -91,8 +112,9 @@ function persist(id: string, f: Flight): void {
         legCount: f.legCount, startedAt: f.startedAt,
       });
       await pool.query(
-        'INSERT INTO tp_mt5_batches (uuid, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)',
-        [id, data],
+        `INSERT INTO tp_mt5_batches (uuid, data, app) VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE data = VALUES(data), app = VALUES(app)`,
+        [id, data, APP_ID],
       );
     } catch (e: any) { console.error('[Batch:srv] persist error:', e?.message || e); }
   })();
@@ -409,7 +431,15 @@ export async function resumeBatches(): Promise<void> {
   try {
     await ensureTable();
     const pool = await getPool();
-    const [rows]: any = await pool.query('SELECT uuid, data FROM tp_mt5_batches');
+    // Only this app's flights, and only ones still checking in. Rows written
+    // before the app column existed have app NULL and are deliberately left
+    // alone: not resuming a stale bot is recoverable, resuming somebody else's
+    // is not.
+    const [rows]: any = await pool.query(
+      `SELECT uuid, data FROM tp_mt5_batches
+       WHERE app = ? AND updated_at >= (NOW() - INTERVAL ? HOUR)`,
+      [APP_ID, MAX_RESUME_AGE_HOURS],
+    );
     if (!Array.isArray(rows) || rows.length === 0) return;
     for (const row of rows) {
       const id = row.uuid;

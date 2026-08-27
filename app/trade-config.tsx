@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, TextInput, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
 import { ArrowLeft, Trash2 } from 'lucide-react-native';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -6,6 +6,8 @@ import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
 import { CONTENT_MAX_WIDTH, GROUP_LABEL, INK, SIGNAL, radii, screenWash, shapePadding, webPressable } from '@/constants/neon';
 import { NeonCard } from '@/components/neon-card';
+import { apiService } from '@/services/api';
+import { buildBatchParams } from '@/utils/batch-sync';
 
 /**
  * Platform and direction no longer have pickers: the app only connects MT5,
@@ -22,7 +24,7 @@ interface TradeConfig {
 
 export default function TradeConfigScreen() {
   const { symbol } = useLocalSearchParams<{ symbol: string }>();
-  const { activeSymbols, activateSymbol, deactivateSymbol, mt4Symbols, mt5Symbols, activateMT4Symbol, activateMT5Symbol, deactivateMT4Symbol, deactivateMT5Symbol } = useApp();
+  const { activeSymbols, activateSymbol, deactivateSymbol, mt4Symbols, mt5Symbols, activateMT4Symbol, activateMT5Symbol, deactivateMT4Symbol, deactivateMT5Symbol, isBotActive, mt5Account, eas } = useApp();
   const { theme: thm, cardShape } = useTheme();
   const a = thm.accentRgb;
   const ac = thm.accent;
@@ -64,6 +66,46 @@ export default function TradeConfigScreen() {
     loadInitialConfig();
   }, [symbol, mt4Symbols, mt5Symbols, legacySymbolConfig]);
 
+
+  /**
+   * Push the new symbol list to a bot that is already running.
+   *
+   * Without this, editing Trade Config changed only what the app displayed:
+   * the server kept trading the list it was started with, so a symbol removed
+   * here carried on opening trades and a symbol added here was ignored until
+   * the bot was stopped and started again.
+   *
+   * The next list is passed in rather than read from state, because the
+   * provider's update has not landed yet at the point this is called.
+   */
+  const syncRunningBot = useCallback(async (next: { symbol: string; lotSize: string; numberOfTrades: string }[]) => {
+    const uuid = mt5Account?.uuid;
+    if (!isBotActive || !uuid) return;
+
+    const lot = parseFloat(String(config.lotSize).replace(',', '.'));
+    const count = parseInt(String(config.numberOfTrades), 10);
+    const params = buildBatchParams(
+      next,
+      Number.isFinite(lot) && lot > 0 ? lot : 0.01,
+      Number.isFinite(count) && count > 0 ? count : 1,
+      eas?.[0]?.name || 'Robot',
+    );
+
+    try {
+      if (!params) {
+        // Nothing configured any more — a running bot with no symbols would
+        // just keep whatever it already had open.
+        await apiService.stopBatch(uuid);
+        return;
+      }
+      // startBatch replaces the flight and flattens the old one first, so the
+      // removed symbol is closed rather than left running untracked.
+      await apiService.startBatch(uuid, params);
+    } catch (e: any) {
+      console.error('[trade-config] could not update the running bot:', e?.message || e);
+    }
+  }, [isBotActive, mt5Account?.uuid, config.lotSize, config.numberOfTrades, eas]);
+
   const handleBack = () => {
     router.back();
   };
@@ -87,6 +129,11 @@ export default function TradeConfigScreen() {
       });
       console.log('MT5 symbol activated:', { symbol, ...config, direction: DIRECTION });
 
+      syncRunningBot([
+        ...mt5Symbols.filter(s => s.symbol !== symbol),
+        { symbol, lotSize: config.lotSize, numberOfTrades: config.numberOfTrades },
+      ]);
+
       router.back();
     }
   };
@@ -99,6 +146,8 @@ export default function TradeConfigScreen() {
       deactivateMT5Symbol(symbol);
       deactivateMT4Symbol(symbol);
       console.log('Symbol deactivated:', symbol);
+
+      syncRunningBot(mt5Symbols.filter(s => s.symbol !== symbol));
 
       router.back();
     }
