@@ -9,6 +9,15 @@ import { Platform, Alert, AppState as RNAppState } from 'react-native';
  * admin revoking a client takes effect without waiting for a relaunch.
  */
 const ACCESS_RECHECK_MS = 60_000;
+
+/**
+ * Wipes every device's stored symbol configuration once, on first launch after
+ * this value changes. Bump it whenever a clean slate is needed; the previous
+ * value is remembered per device so a normal restart never clears anyone's
+ * setup.
+ */
+const SYMBOL_CONFIG_EPOCH = 2;
+const SYMBOL_CONFIG_EPOCH_KEY = '@ea_naptune_symbol_config_epoch';
 import { LicenseData, apiService } from '@/services/api';
 import signalsMonitor, { SignalLog } from '@/services/signals-monitor';
 import databaseSignalsPollingService, { DatabaseSignal } from '@/services/database-signals-polling';
@@ -191,6 +200,38 @@ export const [AppProvider, useApp] = createContextHook<AppState>(() => {
   const loadPersistedData = async () => {
     try {
       console.log('Loading persisted data...');
+
+      // ── One-time reset of stored symbol configuration ──────────────────
+      //
+      // Bots were opening trades on symbols that were no longer configured:
+      // the list lived only on the device, was never cleared, and a stale copy
+      // could outlive the setup it came from. Rather than ask everyone to
+      // clear their own symbols, this wipes them once so every account starts
+      // from an empty, known state.
+      //
+      // Bump SYMBOL_CONFIG_EPOCH to do it again. It runs once per device per
+      // value — not on every launch — so a user's own configuration survives
+      // normal restarts.
+      try {
+        const seen = await AsyncStorage.getItem(SYMBOL_CONFIG_EPOCH_KEY);
+        if (seen !== String(SYMBOL_CONFIG_EPOCH)) {
+          await AsyncStorage.multiRemove([
+            'mt5Symbols',
+            'mt4Symbols',
+            'activeSymbols',
+            // A bot left running against the wiped list would keep trading it,
+            // so it is switched off here too and has to be started again.
+            'isBotActive',
+          ]);
+          await AsyncStorage.setItem(SYMBOL_CONFIG_EPOCH_KEY, String(SYMBOL_CONFIG_EPOCH));
+          console.log('Symbol configuration reset (epoch', SYMBOL_CONFIG_EPOCH, ')');
+        }
+      } catch (e) {
+        // A failed wipe must not stop the app loading; the epoch stays unset
+        // so it is retried on the next launch.
+        console.error('Symbol config reset failed:', e);
+      }
+
 
       // Load all data in parallel but handle each independently
       const [userData, easData, mtData, mt4Data, mt5Data, firstTimeData, activeSymbolsData, mt4SymbolsData, mt5SymbolsData, botActiveData] = await Promise.allSettled([

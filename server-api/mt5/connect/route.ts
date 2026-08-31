@@ -1,5 +1,5 @@
 import { connectEx, disconnect, getAccountSummary } from '@/services/api2trade';
-import { registerSession, forgetSession } from '@/app/api/mt5/session-keeper';
+import { registerSession, forgetSession } from '@/server-api/mt5/session-keeper';
 import crypto from 'crypto';
 
 export async function POST(request: Request): Promise<Response> {

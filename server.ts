@@ -1338,7 +1338,7 @@ async function handleApi(request: Request): Promise<Response> {
 
   try {
     if (pathname === '/api/check-email') {
-      const route = await import('./app/api/check-email/route.ts');
+      const route = await import('./server-api/check-email/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') {
         return route.POST(request) as Promise<Response>;
       }
@@ -1349,7 +1349,7 @@ async function handleApi(request: Request): Promise<Response> {
     }
     // Add auth-license routing
     if (pathname === '/api/auth-license') {
-      const route = await import('./app/api/auth-license/route.ts');
+      const route = await import('./server-api/auth-license/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') {
         return route.POST(request) as Promise<Response>;
       }
@@ -1361,7 +1361,7 @@ async function handleApi(request: Request): Promise<Response> {
 
     // Admin: reset device binding
     if (pathname === '/api/admin-reset-device') {
-      const route = await import('./app/api/admin-reset-device/route.ts');
+      const route = await import('./server-api/admin-reset-device/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') {
         return route.POST(request) as Promise<Response>;
       }
@@ -1373,7 +1373,7 @@ async function handleApi(request: Request): Promise<Response> {
 
     // Add symbols routing
     if (pathname === '/api/symbols') {
-      const route = await import('./app/api/symbols/route.ts');
+      const route = await import('./server-api/symbols/route.ts');
       if (request.method === 'GET' && typeof route.GET === 'function') {
         return route.GET(request) as Promise<Response>;
       }
@@ -1382,74 +1382,74 @@ async function handleApi(request: Request): Promise<Response> {
 
     // ── Api2Trade MT5 routes ──
     if (pathname === '/api/mt5/connect') {
-      const route = await import('./app/api/mt5/connect/route.ts');
+      const route = await import('./server-api/mt5/connect/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
       if (request.method === 'DELETE' && typeof route.DELETE === 'function') return route.DELETE(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/account') {
-      const route = await import('./app/api/mt5/account/route.ts');
+      const route = await import('./server-api/mt5/account/route.ts');
       if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/reconnect') {
-      const route = await import('./app/api/mt5/reconnect/route.ts');
+      const route = await import('./server-api/mt5/reconnect/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/symbols') {
-      const route = await import('./app/api/mt5/symbols/route.ts');
+      const route = await import('./server-api/mt5/symbols/route.ts');
       if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/trade') {
-      const route = await import('./app/api/mt5/trade/route.ts');
+      const route = await import('./server-api/mt5/trade/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/session') {
-      const route = await import('./app/api/mt5/session/route.ts');
+      const route = await import('./server-api/mt5/session/route.ts');
       if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/orders') {
-      const route = await import('./app/api/mt5/orders/route.ts');
+      const route = await import('./server-api/mt5/orders/route.ts');
       if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/history') {
-      const route = await import('./app/api/mt5/history/route.ts');
+      const route = await import('./server-api/mt5/history/route.ts');
       if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/brokers') {
-      const route = await import('./app/api/mt5/brokers/route.ts');
+      const route = await import('./server-api/mt5/brokers/route.ts');
       if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/batch/start') {
-      const route = await import('./app/api/mt5/batch/start/route.ts');
+      const route = await import('./server-api/mt5/batch/start/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/batch/stop') {
-      const route = await import('./app/api/mt5/batch/stop/route.ts');
+      const route = await import('./server-api/mt5/batch/stop/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     if (pathname === '/api/mt5/batch/status') {
-      const route = await import('./app/api/mt5/batch/status/route.ts');
+      const route = await import('./server-api/mt5/batch/status/route.ts');
       if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
@@ -1691,13 +1691,13 @@ console.log(`Server running on http://localhost:${server.port}`);
 // Restore MT5 sessions BEFORE resuming batches: a resumed flight may be due to
 // trade immediately, and it needs a live account to trade into. This also
 // starts the heartbeat that wakes a session back up when the broker drops it.
-import('./app/api/mt5/session-keeper.ts')
+import('./server-api/mt5/session-keeper.ts')
   .then((m) => m.resumeSessions?.())
   .then(() => console.log('[MT5:session] restore-on-boot complete'))
   .catch((e) => console.error('[MT5:session] restore-on-boot failed:', e?.message || e))
   // Resume any active MT5 batches from the DB so a restart/redeploy/sleep doesn't
   // kill running loops — they pick up where they left off.
-  .then(() => import('./app/api/mt5/batch/engine.ts'))
+  .then(() => import('./server-api/mt5/batch/engine.ts'))
   .then((m) => m.resumeBatches?.())
   .then(() => console.log('[Batch:srv] resume-on-boot complete'))
   .catch((e) => console.error('[Batch:srv] resume-on-boot failed:', e?.message || e));

@@ -3,7 +3,7 @@
 // Body: { licence: string, phone_secret?: string }
 
 import * as crypto from 'crypto';
-import { getPool } from '@/app/api/_db';
+import { getPool } from '@/server-api/_db';
 
 function sha256Hex(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');

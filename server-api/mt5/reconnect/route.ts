@@ -1,5 +1,5 @@
 import { ensureConnected } from '@/services/api2trade';
-import { registerSession } from '@/app/api/mt5/session-keeper';
+import { registerSession } from '@/server-api/mt5/session-keeper';
 
 // Probe the session behind `uuid` and, if the broker dropped it, silently
 // re-establish it under the SAME uuid from the stored credentials. Returns

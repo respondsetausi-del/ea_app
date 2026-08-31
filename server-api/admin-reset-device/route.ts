@@ -1,4 +1,4 @@
-import { getPool } from '@/app/api/_db';
+import { getPool } from '@/server-api/_db';
 
 // POST /api/admin-reset-device
 // Body: { email: string, admin_key: string }

@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "eanaptune",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "statusBar": {
@@ -14,13 +14,13 @@
       "translucent": false
     },
     "splash": {
-      "image": "./assets/images/splash-icon.png",
+      "image": "./assets/images/icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#000000"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.ea-naptune-automated-forex-trading-app-bf6qtmx7-6jkhyg7w",
+      "bundleIdentifier": "com.eanaptune.app",
       "statusBar": {
         "style": "light",
         "backgroundColor": "#000000",
@@ -58,7 +58,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "app.ea-naptune-automated-forex-trading-app-bf6qtmx7-6jkhyg7w",
+      "package": "com.eanaptune.app",
       "statusBar": {
         "style": "light",
         "backgroundColor": "#000000",

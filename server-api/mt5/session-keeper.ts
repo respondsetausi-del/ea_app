@@ -21,7 +21,7 @@
 // toward "less persistence", never toward "plaintext passwords in MySQL".
 import crypto from 'crypto';
 import { connectEx, getAccountSummary } from '@/services/api2trade';
-import { getPool } from '@/app/api/_db';
+import { getPool } from '@/server-api/_db';
 
 interface Credentials {
   server: string;

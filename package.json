@@ -10,7 +10,9 @@
     "export:web": "bunx expo export --platform web",
     "build:web": "bunx expo export --platform web && node scripts/post-build.js",
     "serve:dist": "bun server.ts",
-    "start:render": "bun run build:web && bun run serve:dist"
+    "start:render": "bun run build:web && bun run serve:dist",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",

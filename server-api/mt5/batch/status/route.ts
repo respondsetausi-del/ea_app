@@ -1,4 +1,4 @@
-import { getStatus } from '@/app/api/mt5/batch/engine';
+import { getStatus } from '@/server-api/mt5/batch/engine';
 
 export async function GET(request: Request): Promise<Response> {
   try {

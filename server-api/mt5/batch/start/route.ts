@@ -1,4 +1,4 @@
-import { startBatch } from '@/app/api/mt5/batch/engine';
+import { startBatch } from '@/server-api/mt5/batch/engine';
 
 export async function POST(request: Request): Promise<Response> {
   try {

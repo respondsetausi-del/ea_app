@@ -17,9 +17,9 @@
 // free-tier sleep (an external uptime pinger is still the dependable fix).
 import { orderSend, orderClose, getOpenOrders, getPriceHistory, normalizeVolume } from '@/services/api2trade';
 import { crossSignal, extractCloses, type Direction } from '@/utils/moving-average';
-import { ensureLive, withSession } from '@/app/api/mt5/session-keeper';
-import { checkSessionEntitlement } from '@/app/api/mt5/entitlement';
-import { getPool } from '@/app/api/_db';
+import { ensureLive, withSession } from '@/server-api/mt5/session-keeper';
+import { checkSessionEntitlement } from '@/server-api/mt5/entitlement';
+import { getPool } from '@/server-api/_db';
 
 type Strategy = 'ma-cross' | 'flip';
 
@@ -79,6 +79,16 @@ const APP_ID = process.env.BATCH_APP_ID || 'ea_naptune';
 // with whatever symbols were configured back then.
 const MAX_RESUME_AGE_HOURS = Number(process.env.BATCH_MAX_RESUME_AGE_HOURS || 6);
 
+/**
+ * Clean-slate marker for persisted flights.
+ *
+ * Bumping this makes every flight written under an older value un-resumable,
+ * which retires them without deleting anything — a row that is never resumed
+ * can still be read if something needs explaining later. Pairs with
+ * SYMBOL_CONFIG_EPOCH in the app, which clears the device-side symbol list.
+ */
+const FLIGHT_EPOCH = 2;
+
 // ── Persistence (best-effort — the loop still runs in-memory if the DB is down) ──
 async function ensureTable(): Promise<void> {
   if (tableReady) return;
@@ -94,6 +104,10 @@ async function ensureTable(): Promise<void> {
   try {
     await pool.query('ALTER TABLE tp_mt5_batches ADD COLUMN app VARCHAR(40) NULL');
     console.log('[Batch:srv] added app column to tp_mt5_batches');
+  } catch { /* already there */ }
+  try {
+    await pool.query('ALTER TABLE tp_mt5_batches ADD COLUMN epoch INT NULL');
+    console.log('[Batch:srv] added epoch column to tp_mt5_batches');
   } catch { /* already there */ }
   tableReady = true;
 }
@@ -112,9 +126,9 @@ function persist(id: string, f: Flight): void {
         legCount: f.legCount, startedAt: f.startedAt,
       });
       await pool.query(
-        `INSERT INTO tp_mt5_batches (uuid, data, app) VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE data = VALUES(data), app = VALUES(app)`,
-        [id, data, APP_ID],
+        `INSERT INTO tp_mt5_batches (uuid, data, app, epoch) VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE data = VALUES(data), app = VALUES(app), epoch = VALUES(epoch)`,
+        [id, data, APP_ID, FLIGHT_EPOCH],
       );
     } catch (e: any) { console.error('[Batch:srv] persist error:', e?.message || e); }
   })();
@@ -160,6 +174,15 @@ function sizing(f: Flight, symbol: string): { volume: number; count: number } {
 
 /** Open the symbol's configured number of orders, keeping only ones that ticketed. */
 async function openLeg(id: string, f: Flight, symbol: string, dir: Direction): Promise<void> {
+  // Last line of defence. Every caller already iterates f.symbols, so reaching
+  // here with anything else means a bug upstream — and the cost of that bug is
+  // a real position on an instrument the account never asked to trade. Cheap
+  // enough to check on every order.
+  if (!f.symbols.includes(symbol)) {
+    console.error(`[Batch:srv] ${id} REFUSED to open ${symbol} — not in the configured list [${f.symbols.join(', ')}]`);
+    return;
+  }
+
   const { volume: requested, count } = sizing(f, symbol);
   // Clamp to the broker's min/step here: the engine calls Api2Trade directly
   // rather than going through the trade route.
@@ -437,8 +460,8 @@ export async function resumeBatches(): Promise<void> {
     // is not.
     const [rows]: any = await pool.query(
       `SELECT uuid, data FROM tp_mt5_batches
-       WHERE app = ? AND updated_at >= (NOW() - INTERVAL ? HOUR)`,
-      [APP_ID, MAX_RESUME_AGE_HOURS],
+       WHERE app = ? AND epoch = ? AND updated_at >= (NOW() - INTERVAL ? HOUR)`,
+      [APP_ID, FLIGHT_EPOCH, MAX_RESUME_AGE_HOURS],
     );
     if (!Array.isArray(rows) || rows.length === 0) return;
     for (const row of rows) {

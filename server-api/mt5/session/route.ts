@@ -1,4 +1,4 @@
-import { sessionStatus, ensureLive, isRegistered } from '@/app/api/mt5/session-keeper';
+import { sessionStatus, ensureLive, isRegistered } from '@/server-api/mt5/session-keeper';
 
 /**
  * Connection health for the sessions this server is keeping alive.

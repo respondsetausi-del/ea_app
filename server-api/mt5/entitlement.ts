@@ -8,7 +8,7 @@
 //
 // So the server asks the dashboard directly, on a cadence, and kills flights
 // whose access has ended.
-import { getSessionEmail } from '@/app/api/mt5/session-keeper';
+import { getSessionEmail } from '@/server-api/mt5/session-keeper';
 
 const DASHBOARD = (process.env.DASHBOARD_URL || process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://eanaptune.vercel.app').replace(/\/$/, '');
 

@@ -1,4 +1,4 @@
-import { getPool } from '@/app/api/_db';
+import { getPool } from '@/server-api/_db';
 
 export async function POST(request: Request): Promise<Response> {
     try {
