@@ -215,25 +215,84 @@ async function openLeg(id: string, f: Flight, symbol: string, dir: Direction): P
  * otherwise sit there and hedge the new leg. Close-before-open only works if
  * "close" really means everything on that symbol.
  */
-async function flatten(id: string, f: Flight, symbol: string): Promise<void> {
-  const p = pos(f, symbol);
+/**
+ * Whether the symbol is provably out of the market.
+ * UNKNOWN means the account could not be read — treated as "not flat", never
+ * as "nothing open".
+ */
+type FlatState = 'FLAT' | 'STILL_OPEN' | 'UNKNOWN';
+
+/** How many times to re-read the account before believing a symbol is flat. */
+const FLAT_PASSES = 4;
+const SETTLE_MS = 1500;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Positions open on this symbol, or null when the account can't be read. */
+async function openPositions(id: string, symbol: string): Promise<any[] | null> {
   try {
     const open = await withSession(id, () => getOpenOrders(id));
-    const mine = Array.isArray(open) ? open.filter((o: any) => o?.symbol === symbol && o?.ticket) : [];
-    await Promise.all(mine.map((o: any) =>
-      // OrderClose needs the volume or the position doesn't close.
-      withSession(id, () => orderClose({ id, ticket: o.ticket, lots: o.lots ?? sizing(f, symbol).volume }))
-        .catch((e: any) => console.error(`[Batch:srv] ${id} ${symbol} close error:`, e?.message || e)),
-    ));
+    // An error object is not an empty book. Unknown must never read as flat.
+    if (!Array.isArray(open)) return null;
+    return open.filter((o: any) => o?.symbol === symbol && o?.ticket);
   } catch (e: any) {
-    console.error(`[Batch:srv] ${id} ${symbol} flatten error:`, e?.message || e);
-    // Fall back to the tickets we know about.
-    await Promise.all(p.tickets.map((t) =>
-      orderClose({ id, ticket: t, lots: sizing(f, symbol).volume }).catch(() => {}),
+    console.error(`[Batch:srv] ${id} ${symbol} openPositions error:`, e?.message || e);
+    return null;
+  }
+}
+
+/**
+ * Close everything on the symbol and PROVE it, by re-reading the account.
+ *
+ * This used to fire the closes and then unconditionally set tickets to [] and
+ * dir to null — so a close that failed, or an account that could not be read,
+ * still reported success. The caller then opened the opposite direction, which
+ * is how a symbol ended up holding a buy and a sell at once. Clearing the
+ * ticket list on a failed close also made those positions untracked, so
+ * nothing would try to close them again.
+ *
+ * State is only cleared on a proven-flat read. Anything else is reported to
+ * the caller, which must withhold the new leg.
+ */
+async function flatten(id: string, f: Flight, symbol: string): Promise<FlatState> {
+  const p = pos(f, symbol);
+
+  const first = await openPositions(id, symbol);
+  const targets = first === null
+    ? p.tickets.map((t) => ({ ticket: t, lots: sizing(f, symbol).volume }))
+    : first.map((o: any) => ({ ticket: o.ticket, lots: o.lots ?? sizing(f, symbol).volume }));
+
+  if (targets.length) {
+    await Promise.all(targets.map((o) =>
+      withSession(id, () => orderClose({ id, ticket: o.ticket, lots: o.lots }))
+        .catch((e: any) => console.error(`[Batch:srv] ${id} ${symbol} close ${o.ticket}:`, e?.message || e)),
     ));
   }
-  p.tickets = [];
-  p.dir = null;
+
+  let unreadable = false;
+  for (let pass = 1; pass <= FLAT_PASSES; pass++) {
+    // A broker needs a moment to register a close; give it more each pass.
+    await sleep(SETTLE_MS * pass);
+
+    const open = await openPositions(id, symbol);
+    if (open === null) { unreadable = true; continue; }
+    unreadable = false;
+
+    if (open.length === 0) {
+      p.tickets = [];
+      p.dir = null;
+      return 'FLAT';
+    }
+
+    console.warn(`[Batch:srv] ${id} ${symbol} still ${open.length} open (pass ${pass}) — re-closing`);
+    p.tickets = open.map((o: any) => o.ticket);
+    await Promise.all(open.map((o: any) =>
+      withSession(id, () => orderClose({ id, ticket: o.ticket, lots: o.lots ?? sizing(f, symbol).volume }))
+        .catch(() => {}),
+    ));
+  }
+
+  return unreadable ? 'UNKNOWN' : 'STILL_OPEN';
 }
 
 // ── Strategy: EMA crossover ──
@@ -280,8 +339,20 @@ async function reconcile(id: string, f: Flight, symbol: string): Promise<void> {
     return;
   }
 
-  // Close-before-open: never let the new leg hedge the old one.
-  await flatten(id, f, symbol);
+  // Close-before-open, and PROVE it. Reversing on an unverified close is how
+  // a symbol ends up holding a buy and a sell at the same time: the closes are
+  // fired, one fails or the account cannot be read, and the opposite leg opens
+  // on top of the position that is still live.
+  //
+  // Withholding costs one cycle — the next evaluation tries again. Opening
+  // anyway costs a hedged position that neither leg will close.
+  const state = await flatten(id, f, symbol);
+  if (state !== 'FLAT') {
+    p.note = `${dir} withheld — could not prove flat (${state})`;
+    console.error(`[Batch:srv] ${id} ${symbol} ${dir} WITHHELD — flat unproven (${state})`);
+    return;
+  }
+
   await openLeg(id, f, symbol, dir);
   p.note = `${p.note} — ${reason}`;
 }
@@ -332,7 +403,14 @@ async function cycle(id: string): Promise<void> {
     for (const s of f.symbols) {
       const p = pos(f, s);
       const next: Direction = p.dir === 'Buy' ? 'Sell' : 'Buy';
-      await flatten(id, f, s);
+      // Same rule as ma-cross: a flip that cannot prove the old side closed
+      // would open the opposite leg on top of it.
+      const state = await flatten(id, f, s);
+      if (state !== 'FLAT') {
+        p.note = `${next} withheld — could not prove flat (${state})`;
+        console.error(`[Batch:srv] ${id} ${s} flip WITHHELD — flat unproven (${state})`);
+        continue;
+      }
       await openLeg(id, f, s, next);
     }
     f.status = `flip — ${f.symbols.length} symbol(s)`;
@@ -416,7 +494,16 @@ export async function stopBatch(id: string, closeOpen = true) {
   f.active = false;
   if (f.timer) { clearTimeout(f.timer); f.timer = null; }
   if (closeOpen) {
-    await Promise.all(f.symbols.map((s) => flatten(id, f, s).catch(() => {})));
+    const states = await Promise.all(
+      f.symbols.map((s) => flatten(id, f, s).catch(() => 'UNKNOWN' as FlatState)),
+    );
+    // Stopping is the last chance to close out. If anything survived it, say
+    // so loudly — the user is about to lose sight of a live position.
+    f.symbols.forEach((s, i) => {
+      if (states[i] !== 'FLAT') {
+        console.error(`[Batch:srv] ${id} ${s} STILL OPEN after stop (${states[i]}) — needs closing by hand`);
+      }
+    });
   }
   flights.delete(id);
   unpersist(id);
