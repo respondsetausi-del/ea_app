@@ -17,6 +17,7 @@
 // free-tier sleep (an external uptime pinger is still the dependable fix).
 import { orderSend, orderClose, getOpenOrders, getPriceHistory, normalizeVolume } from '@/services/api2trade';
 import { crossSignal, extractCloses, type Direction } from '@/utils/moving-average';
+import { atr, decimalsOf, extractBars, stopPrice, targetPrice } from '@/utils/risk';
 import { ensureLive, withSession } from '@/server-api/mt5/session-keeper';
 import { checkSessionEntitlement } from '@/server-api/mt5/entitlement';
 import { getPool } from '@/server-api/_db';
@@ -45,6 +46,12 @@ interface Flight {
   fastPeriod: number;
   slowPeriod: number;
   minSeparationPct: number;
+  /** Bars of ATR used to size the stop and target. */
+  atrPeriod: number;
+  /** Stop distance as a multiple of ATR. 0 disables it — strongly discouraged. */
+  slAtrMult: number;
+  /** Target distance as a multiple of ATR. 0 means no take-profit. */
+  tpAtrMult: number;
   positions: Record<string, Position>;
   timer: ReturnType<typeof setTimeout> | null;
   active: boolean;
@@ -89,6 +96,13 @@ const MAX_RESUME_AGE_HOURS = Number(process.env.BATCH_MAX_RESUME_AGE_HOURS || 6)
  */
 const FLIGHT_EPOCH = 2;
 
+// Risk defaults, applied when the caller does not specify. A 1.5x ATR stop and
+// a 2.5x ATR target give a positive reward-to-risk ratio while leaving enough
+// room that ordinary noise on the timeframe does not stop the trade out.
+const DEFAULT_ATR_PERIOD = 14;
+const DEFAULT_SL_ATR_MULT = 1.5;
+const DEFAULT_TP_ATR_MULT = 2.5;
+
 // ── Persistence (best-effort — the loop still runs in-memory if the DB is down) ──
 async function ensureTable(): Promise<void> {
   if (tableReady) return;
@@ -122,6 +136,7 @@ function persist(id: string, f: Flight): void {
         symbols: f.symbols, volume: f.volume, count: f.count, perSymbol: f.perSymbol, intervalMs: f.intervalMs,
         comment: f.comment, strategy: f.strategy, timeframe: f.timeframe,
         fastPeriod: f.fastPeriod, slowPeriod: f.slowPeriod, minSeparationPct: f.minSeparationPct,
+        atrPeriod: f.atrPeriod, slAtrMult: f.slAtrMult, tpAtrMult: f.tpAtrMult,
         positions: f.positions, nextFlipAt: f.nextFlipAt,
         legCount: f.legCount, startedAt: f.startedAt,
       });
@@ -173,7 +188,10 @@ function sizing(f: Flight, symbol: string): { volume: number; count: number } {
 }
 
 /** Open the symbol's configured number of orders, keeping only ones that ticketed. */
-async function openLeg(id: string, f: Flight, symbol: string, dir: Direction): Promise<void> {
+async function openLeg(
+  id: string, f: Flight, symbol: string, dir: Direction,
+  atrValue = 0, refPrice = 0, decimals = 0,
+): Promise<void> {
   // Last line of defence. Every caller already iterates f.symbols, so reaching
   // here with anything else means a bug upstream — and the cost of that bug is
   // a real position on an instrument the account never asked to trade. Cheap
@@ -187,9 +205,29 @@ async function openLeg(id: string, f: Flight, symbol: string, dir: Direction): P
   // Clamp to the broker's min/step here: the engine calls Api2Trade directly
   // rather than going through the trade route.
   const volume = await normalizeVolume(id, symbol, requested);
+
+  // Stop and target ride on the OrderSend itself rather than being attached by
+  // a follow-up modify. A separate call leaves a window in which the position
+  // is live and unprotected, and it only covers the paths that remember to
+  // make it. Sent this way, the order cannot exist without its stop.
+  //
+  // Levels are measured from the last close, since the fill price does not
+  // exist yet — close enough on the timeframes this runs on, and far better
+  // than no stop at all.
+  const sl = stopPrice(refPrice, atrValue, dir, f.slAtrMult, decimals);
+  const tp = targetPrice(refPrice, atrValue, dir, f.tpAtrMult, decimals);
+  if (f.slAtrMult > 0 && sl === null) {
+    // Loud, because the position is about to run with nothing behind it.
+    console.error(`[Batch:srv] ${id} ${symbol} opening UNPROTECTED — atr=${atrValue} price=${refPrice}`);
+    pos(f, symbol).note = 'opening without a stop — no ATR to size one from';
+  }
   const results: any[] = await Promise.all(
     Array.from({ length: count }, () =>
-      withSession(id, () => orderSend({ id, symbol, operation: dir, volume, comment: f.comment }))
+      withSession(id, () => orderSend({
+        id, symbol, operation: dir, volume, comment: f.comment,
+        ...(sl !== null ? { stoploss: sl } : {}),
+        ...(tp !== null ? { takeprofit: tp } : {}),
+      }))
         .catch((e: any) => { console.error(`[Batch:srv] ${id} ${symbol} open error:`, e?.message || e); return null; }),
     ),
   );
@@ -204,7 +242,9 @@ async function openLeg(id: string, f: Flight, symbol: string, dir: Direction): P
   p.note = p.tickets.length === count
     ? `${dir} x${p.tickets.length} @ ${volume}`
     : `${dir} ${p.tickets.length}/${count} filled @ ${volume}`;
-  console.log(`[Batch:srv] ${id} ${symbol} opened ${p.tickets.length}/${count} ${dir} @ ${volume}`);
+  console.log(`[Batch:srv] ${id} ${symbol} opened ${p.tickets.length}/${count} ${dir} @ ${volume}`
+    + (sl !== null ? ` SL ${sl}` : ' NO SL')
+    + (tp !== null ? ` TP ${tp}` : ''));
 }
 
 /**
@@ -298,7 +338,18 @@ async function flatten(id: string, f: Flight, symbol: string): Promise<FlatState
 // ── Strategy: EMA crossover ──
 
 /** Read one symbol's target direction from its price history. */
-async function targetDirection(id: string, f: Flight, symbol: string): Promise<{ dir: Direction | null; reason: string }> {
+interface Target {
+  dir: Direction | null;
+  reason: string;
+  /** ATR over the same series the signal used, or 0 when it can't be measured. */
+  atr: number;
+  /** Last close — the reference the stop and target are measured from. */
+  price: number;
+  /** Price precision this symbol actually quotes at. */
+  decimals: number;
+}
+
+async function targetDirection(id: string, f: Flight, symbol: string): Promise<Target> {
   try {
     const payload = await withSession(id, () => getPriceHistory(id, symbol, f.timeframe));
     const closes = extractCloses(payload);
@@ -307,16 +358,23 @@ async function targetDirection(id: string, f: Flight, symbol: string): Promise<{
       // silent empty series would look exactly like a flat market.
       console.error(`[Batch:srv] ${id} ${symbol} price history yielded no closes; payload keys:`,
         payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 8) : typeof payload);
-      return { dir: null, reason: 'no price history' };
+      return { dir: null, reason: 'no price history', atr: 0, price: 0, decimals: 0 };
     }
     const sig = crossSignal(closes, {
       fastPeriod: f.fastPeriod,
       slowPeriod: f.slowPeriod,
       minSeparationPct: f.minSeparationPct,
     });
-    return { dir: sig.direction, reason: sig.reason };
+    // Sized from the same bars the signal was read from, so the stop matches
+    // the volatility the decision was made in.
+    const bars = extractBars(payload);
+    const atrValue = atr(bars, f.atrPeriod) ?? 0;
+    const price = closes[closes.length - 1];
+    const decimals = decimalsOf(...closes.slice(-8));
+
+    return { dir: sig.direction, reason: sig.reason, atr: atrValue, price, decimals };
   } catch (e: any) {
-    return { dir: null, reason: `history failed: ${e?.message || e}` };
+    return { dir: null, reason: `history failed: ${e?.message || e}`, atr: 0, price: 0, decimals: 0 };
   }
 }
 
@@ -328,7 +386,7 @@ async function targetDirection(id: string, f: Flight, symbol: string): Promise<{
  */
 async function reconcile(id: string, f: Flight, symbol: string): Promise<void> {
   const p = pos(f, symbol);
-  const { dir, reason } = await targetDirection(id, f, symbol);
+  const { dir, reason, atr: atrValue, price, decimals } = await targetDirection(id, f, symbol);
 
   if (!dir) {
     p.note = `hold — ${reason}`;
@@ -353,7 +411,7 @@ async function reconcile(id: string, f: Flight, symbol: string): Promise<void> {
     return;
   }
 
-  await openLeg(id, f, symbol, dir);
+  await openLeg(id, f, symbol, dir, atrValue, price, decimals);
   p.note = `${p.note} — ${reason}`;
 }
 
@@ -446,6 +504,9 @@ export interface StartParams {
   fastPeriod?: number;
   slowPeriod?: number;
   minSeparationPct?: number;
+  atrPeriod?: number;
+  slAtrMult?: number;
+  tpAtrMult?: number;
 }
 
 export function startBatch(params: StartParams) {
@@ -467,6 +528,9 @@ export function startBatch(params: StartParams) {
     fastPeriod: Math.max(2, params.fastPeriod || 20),
     slowPeriod: Math.max(3, params.slowPeriod || 50),
     minSeparationPct: params.minSeparationPct ?? 0.02,
+    atrPeriod: Math.max(2, params.atrPeriod ?? DEFAULT_ATR_PERIOD),
+    slAtrMult: params.slAtrMult ?? DEFAULT_SL_ATR_MULT,
+    tpAtrMult: params.tpAtrMult ?? DEFAULT_TP_ATR_MULT,
     positions: {},
     timer: null,
     active: true,
@@ -575,6 +639,9 @@ export async function resumeBatches(): Promise<void> {
         fastPeriod: Math.max(2, c.fastPeriod || 20),
         slowPeriod: Math.max(3, c.slowPeriod || 50),
         minSeparationPct: c.minSeparationPct ?? 0.02,
+        atrPeriod: Math.max(2, Number(c.atrPeriod) || DEFAULT_ATR_PERIOD),
+        slAtrMult: c.slAtrMult ?? DEFAULT_SL_ATR_MULT,
+        tpAtrMult: c.tpAtrMult ?? DEFAULT_TP_ATR_MULT,
         positions: (c.positions && typeof c.positions === 'object') ? c.positions
           : (c.dir && c.tickets ? { [symbols[0]]: { dir: c.dir, tickets: c.tickets, note: 'resumed' } } : {}),
         timer: null,

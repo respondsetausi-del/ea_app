@@ -15,6 +15,7 @@
     "expo-env.d.ts"
   ],
   "exclude": [
-    "server.ts"
+    "server.ts",
+    "**/*.test.ts"
   ]
 }
