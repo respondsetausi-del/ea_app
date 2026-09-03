@@ -1,4 +1,4 @@
-import { startBatch } from '@/server-api/mt5/batch/engine';
+import { startStrategy } from '@/server-api/mt5/strategy/engine';
 
 export async function POST(request: Request): Promise<Response> {
   try {
@@ -20,7 +20,7 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: 'id, symbols and volume are required' }, { status: 400 });
     }
 
-    const result = startBatch({
+    const result = startStrategy({
       id,
       symbols,
       volume,
@@ -32,12 +32,17 @@ export async function POST(request: Request): Promise<Response> {
       slowPeriod: Number(body?.slowPeriod) || 50,
       minSeparationPct: body?.minSeparationPct !== undefined ? Number(body.minSeparationPct) : undefined,
       perSymbol: (body?.perSymbol && typeof body.perSymbol === 'object') ? body.perSymbol : {},
+      // Risk sizing. Omitted values fall back to the engine's defaults rather
+      // than to zero, which would mean "no stop".
+      atrPeriod: body?.atrPeriod !== undefined ? Number(body.atrPeriod) : undefined,
+      slAtrMult: body?.slAtrMult !== undefined ? Number(body.slAtrMult) : undefined,
+      tpAtrMult: body?.tpAtrMult !== undefined ? Number(body.tpAtrMult) : undefined,
     });
 
     if (!result.ok) return Response.json(result, { status: 400 });
     return Response.json(result);
   } catch (error: any) {
-    console.error('MT5 batch/start error:', error);
+    console.error('MT5 strategy/start error:', error);
     return Response.json({ error: error?.message || 'Failed to start' }, { status: 502 });
   }
 }

@@ -7,7 +7,7 @@ import { useTheme } from '@/providers/theme-provider';
 import { CONTENT_MAX_WIDTH, GROUP_LABEL, INK, SIGNAL, radii, screenWash, shapePadding, webPressable } from '@/constants/neon';
 import { NeonCard } from '@/components/neon-card';
 import { apiService } from '@/services/api';
-import { buildBatchParams } from '@/utils/batch-sync';
+import { buildStrategyParams } from '@/utils/strategy-sync';
 
 /**
  * Platform and direction no longer have pickers: the app only connects MT5,
@@ -84,7 +84,7 @@ export default function TradeConfigScreen() {
 
     const lot = parseFloat(String(config.lotSize).replace(',', '.'));
     const count = parseInt(String(config.numberOfTrades), 10);
-    const params = buildBatchParams(
+    const params = buildStrategyParams(
       next,
       Number.isFinite(lot) && lot > 0 ? lot : 0.01,
       Number.isFinite(count) && count > 0 ? count : 1,
@@ -95,12 +95,12 @@ export default function TradeConfigScreen() {
       if (!params) {
         // Nothing configured any more — a running bot with no symbols would
         // just keep whatever it already had open.
-        await apiService.stopBatch(uuid);
+        await apiService.stopStrategy(uuid);
         return;
       }
-      // startBatch replaces the flight and flattens the old one first, so the
+      // startStrategy replaces the flight and flattens the old one first, so the
       // removed symbol is closed rather than left running untracked.
-      await apiService.startBatch(uuid, params);
+      await apiService.startStrategy(uuid, params);
     } catch (e: any) {
       console.error('[trade-config] could not update the running bot:', e?.message || e);
     }

@@ -1,4 +1,4 @@
-// Server-side batch engine (SERVER ONLY). Runs on the Bun server so it keeps
+// Server-side strategy engine (SERVER ONLY). Runs on the Bun server so it keeps
 // trading while the app is backgrounded or closed.
 //
 // One strategy: every cycle, each symbol's direction is read from an EMA
@@ -10,7 +10,7 @@
 // carried an unrecognised strategy, so a malformed row started trading on a
 // timer. Removed rather than left switchable.
 //
-// Hardened for reboots: each flight is persisted to MySQL and resumeBatches()
+// Hardened for reboots: each flight is persisted to MySQL and resumeStrategies()
 // reloads active flights on startup. Keep-alive self-pings /health to reduce
 // free-tier sleep (an external uptime pinger is still the dependable fix).
 import { orderSend, orderClose, getOpenOrders, getPriceHistory, normalizeVolume } from '@/services/api2trade';
@@ -51,9 +51,9 @@ interface Flight {
   timer: ReturnType<typeof setTimeout> | null;
   active: boolean;
   status: string;
-  legCount: number;
+  cycleCount: number;
   startedAt: number;
-  nextFlipAt: number;
+  nextRunAt: number;
 }
 
 const flights = new Map<string, Flight>();
@@ -69,7 +69,7 @@ const PERSIST = process.env.RENDER === 'true' || process.env.BATCH_PERSIST === '
 //
 // _db.ts falls back to a hard-coded MySQL host and the `eaconverter` database
 // when DB_* is unset, so any other deployment built from this codebase lands in
-// the same database and the same tp_mt5_batches table. Resume used to read
+// the same database and the same tp_mt5_strategies table. Resume used to read
 // every row in it, which means one instance could pick up another's flights and
 // trade symbols that were never configured here.
 const APP_ID = process.env.BATCH_APP_ID || 'ea_naptune';
@@ -103,7 +103,7 @@ async function ensureTable(): Promise<void> {
   if (tableReady) return;
   const pool = await getPool();
   await pool.query(
-    `CREATE TABLE IF NOT EXISTS tp_mt5_batches (
+    `CREATE TABLE IF NOT EXISTS tp_mt5_strategies (
       uuid VARCHAR(80) PRIMARY KEY,
       data TEXT NOT NULL,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -111,12 +111,12 @@ async function ensureTable(): Promise<void> {
   );
   // Added after the table shipped, so tolerate it already existing.
   try {
-    await pool.query('ALTER TABLE tp_mt5_batches ADD COLUMN app VARCHAR(40) NULL');
-    console.log('[Batch:srv] added app column to tp_mt5_batches');
+    await pool.query('ALTER TABLE tp_mt5_strategies ADD COLUMN app VARCHAR(40) NULL');
+    console.log('[Strategy] added app column to tp_mt5_strategies');
   } catch { /* already there */ }
   try {
-    await pool.query('ALTER TABLE tp_mt5_batches ADD COLUMN epoch INT NULL');
-    console.log('[Batch:srv] added epoch column to tp_mt5_batches');
+    await pool.query('ALTER TABLE tp_mt5_strategies ADD COLUMN epoch INT NULL');
+    console.log('[Strategy] added epoch column to tp_mt5_strategies');
   } catch { /* already there */ }
   tableReady = true;
 }
@@ -132,23 +132,23 @@ function persist(id: string, f: Flight): void {
         comment: f.comment, timeframe: f.timeframe,
         fastPeriod: f.fastPeriod, slowPeriod: f.slowPeriod, minSeparationPct: f.minSeparationPct,
         atrPeriod: f.atrPeriod, slAtrMult: f.slAtrMult, tpAtrMult: f.tpAtrMult,
-        positions: f.positions, nextFlipAt: f.nextFlipAt,
-        legCount: f.legCount, startedAt: f.startedAt,
+        positions: f.positions, nextRunAt: f.nextRunAt,
+        cycleCount: f.cycleCount, startedAt: f.startedAt,
       });
       await pool.query(
-        `INSERT INTO tp_mt5_batches (uuid, data, app, epoch) VALUES (?, ?, ?, ?)
+        `INSERT INTO tp_mt5_strategies (uuid, data, app, epoch) VALUES (?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE data = VALUES(data), app = VALUES(app), epoch = VALUES(epoch)`,
         [id, data, APP_ID, FLIGHT_EPOCH],
       );
-    } catch (e: any) { console.error('[Batch:srv] persist error:', e?.message || e); }
+    } catch (e: any) { console.error('[Strategy] persist error:', e?.message || e); }
   })();
 }
 
 function unpersist(id: string): void {
   if (!PERSIST) return;
   (async () => {
-    try { await ensureTable(); const pool = await getPool(); await pool.query('DELETE FROM tp_mt5_batches WHERE uuid = ?', [id]); }
-    catch (e: any) { console.error('[Batch:srv] unpersist error:', e?.message || e); }
+    try { await ensureTable(); const pool = await getPool(); await pool.query('DELETE FROM tp_mt5_strategies WHERE uuid = ?', [id]); }
+    catch (e: any) { console.error('[Strategy] unpersist error:', e?.message || e); }
   })();
 }
 
@@ -158,7 +158,7 @@ function ensureKeepAlive(): void {
   if (!url || keepAliveTimer) return;
   const base = url.replace(/\/$/, '');
   keepAliveTimer = setInterval(() => { fetch(`${base}/health`).catch(() => {}); }, 4 * 60 * 1000);
-  console.log('[Batch:srv] keep-alive started for', base);
+  console.log('[Strategy] keep-alive started for', base);
 }
 
 function maybeStopKeepAlive(): void {
@@ -192,7 +192,7 @@ async function openLeg(
   // a real position on an instrument the account never asked to trade. Cheap
   // enough to check on every order.
   if (!f.symbols.includes(symbol)) {
-    console.error(`[Batch:srv] ${id} REFUSED to open ${symbol} — not in the configured list [${f.symbols.join(', ')}]`);
+    console.error(`[Strategy] ${id} REFUSED to open ${symbol} — not in the configured list [${f.symbols.join(', ')}]`);
     return;
   }
 
@@ -213,7 +213,7 @@ async function openLeg(
   const tp = targetPrice(refPrice, atrValue, dir, f.tpAtrMult, decimals);
   if (f.slAtrMult > 0 && sl === null) {
     // Loud, because the position is about to run with nothing behind it.
-    console.error(`[Batch:srv] ${id} ${symbol} opening UNPROTECTED — atr=${atrValue} price=${refPrice}`);
+    console.error(`[Strategy] ${id} ${symbol} opening UNPROTECTED — atr=${atrValue} price=${refPrice}`);
     pos(f, symbol).note = 'opening without a stop — no ATR to size one from';
   }
   const results: any[] = await Promise.all(
@@ -223,7 +223,7 @@ async function openLeg(
         ...(sl !== null ? { stoploss: sl } : {}),
         ...(tp !== null ? { takeprofit: tp } : {}),
       }))
-        .catch((e: any) => { console.error(`[Batch:srv] ${id} ${symbol} open error:`, e?.message || e); return null; }),
+        .catch((e: any) => { console.error(`[Strategy] ${id} ${symbol} open error:`, e?.message || e); return null; }),
     ),
   );
 
@@ -237,7 +237,7 @@ async function openLeg(
   p.note = p.tickets.length === count
     ? `${dir} x${p.tickets.length} @ ${volume}`
     : `${dir} ${p.tickets.length}/${count} filled @ ${volume}`;
-  console.log(`[Batch:srv] ${id} ${symbol} opened ${p.tickets.length}/${count} ${dir} @ ${volume}`
+  console.log(`[Strategy] ${id} ${symbol} opened ${p.tickets.length}/${count} ${dir} @ ${volume}`
     + (sl !== null ? ` SL ${sl}` : ' NO SL')
     + (tp !== null ? ` TP ${tp}` : ''));
 }
@@ -271,7 +271,7 @@ async function openPositions(id: string, symbol: string): Promise<any[] | null> 
     if (!Array.isArray(open)) return null;
     return open.filter((o: any) => o?.symbol === symbol && o?.ticket);
   } catch (e: any) {
-    console.error(`[Batch:srv] ${id} ${symbol} openPositions error:`, e?.message || e);
+    console.error(`[Strategy] ${id} ${symbol} openPositions error:`, e?.message || e);
     return null;
   }
 }
@@ -300,7 +300,7 @@ async function flatten(id: string, f: Flight, symbol: string): Promise<FlatState
   if (targets.length) {
     await Promise.all(targets.map((o) =>
       withSession(id, () => orderClose({ id, ticket: o.ticket, lots: o.lots }))
-        .catch((e: any) => console.error(`[Batch:srv] ${id} ${symbol} close ${o.ticket}:`, e?.message || e)),
+        .catch((e: any) => console.error(`[Strategy] ${id} ${symbol} close ${o.ticket}:`, e?.message || e)),
     ));
   }
 
@@ -319,7 +319,7 @@ async function flatten(id: string, f: Flight, symbol: string): Promise<FlatState
       return 'FLAT';
     }
 
-    console.warn(`[Batch:srv] ${id} ${symbol} still ${open.length} open (pass ${pass}) — re-closing`);
+    console.warn(`[Strategy] ${id} ${symbol} still ${open.length} open (pass ${pass}) — re-closing`);
     p.tickets = open.map((o: any) => o.ticket);
     await Promise.all(open.map((o: any) =>
       withSession(id, () => orderClose({ id, ticket: o.ticket, lots: o.lots ?? sizing(f, symbol).volume }))
@@ -351,7 +351,7 @@ async function targetDirection(id: string, f: Flight, symbol: string): Promise<T
     if (closes.length === 0) {
       // Worth shouting about: the payload shape varies by server build, and a
       // silent empty series would look exactly like a flat market.
-      console.error(`[Batch:srv] ${id} ${symbol} price history yielded no closes; payload keys:`,
+      console.error(`[Strategy] ${id} ${symbol} price history yielded no closes; payload keys:`,
         payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 8) : typeof payload);
       return { dir: null, reason: 'no price history', atr: 0, price: 0, decimals: 0 };
     }
@@ -402,7 +402,7 @@ async function reconcile(id: string, f: Flight, symbol: string): Promise<void> {
   const state = await flatten(id, f, symbol);
   if (state !== 'FLAT') {
     p.note = `${dir} withheld — could not prove flat (${state})`;
-    console.error(`[Batch:srv] ${id} ${symbol} ${dir} WITHHELD — flat unproven (${state})`);
+    console.error(`[Strategy] ${id} ${symbol} ${dir} WITHHELD — flat unproven (${state})`);
     return;
   }
 
@@ -421,11 +421,11 @@ async function cycle(id: string): Promise<void> {
   // and the session keeper will happily keep its connection alive forever.
   const entitlement = await checkSessionEntitlement(id);
   if (!entitlement.allowed) {
-    console.warn(`[Batch:srv] ${id} stopping — ${entitlement.reason}`);
+    console.warn(`[Strategy] ${id} stopping — ${entitlement.reason}`);
     f.status = `stopped — ${entitlement.reason}`;
     // Close out rather than abandoning open positions to a user who can no
     // longer see or manage them from the app.
-    await stopBatch(id, true).catch(() => {});
+    await stopStrategy(id, true).catch(() => {});
     return;
   }
 
@@ -436,8 +436,8 @@ async function cycle(id: string): Promise<void> {
   if (!live) {
     f.status = 'MT5 session down — retrying next cycle';
     for (const s of f.symbols) pos(f, s).note = 'waiting for MT5 session';
-    console.warn(`[Batch:srv] ${id} session not live — skipping cycle`);
-    f.nextFlipAt = Date.now() + f.intervalMs;
+    console.warn(`[Strategy] ${id} session not live — skipping cycle`);
+    f.nextRunAt = Date.now() + f.intervalMs;
     persist(id, f);
     schedule(id, f, f.intervalMs);
     return;
@@ -445,14 +445,14 @@ async function cycle(id: string): Promise<void> {
 
   // Symbols are independent; one bad history call shouldn't stall the rest.
   await Promise.all(f.symbols.map((s) => reconcile(id, f, s).catch((e: any) => {
-    console.error(`[Batch:srv] ${id} ${s} reconcile error:`, e?.message || e);
+    console.error(`[Strategy] ${id} ${s} reconcile error:`, e?.message || e);
     pos(f, s).note = `error: ${e?.message || e}`;
   })));
   const inPosition = f.symbols.filter((s) => pos(f, s).tickets.length > 0).length;
   f.status = `EMA${f.fastPeriod}/${f.slowPeriod} ${f.timeframe} — ${inPosition}/${f.symbols.length} symbols in position`;
 
-  f.legCount += 1;
-  f.nextFlipAt = Date.now() + f.intervalMs;
+  f.cycleCount += 1;
+  f.nextRunAt = Date.now() + f.intervalMs;
   persist(id, f);
   schedule(id, f, f.intervalMs);
 }
@@ -485,9 +485,9 @@ export interface StartParams {
   tpAtrMult?: number;
 }
 
-export function startBatch(params: StartParams) {
+export function startStrategy(params: StartParams) {
   const { id } = params;
-  stopBatch(id, true).catch(() => {});
+  stopStrategy(id, true).catch(() => {});
 
   const symbols = (params.symbols || []).map((s) => String(s).trim()).filter(Boolean);
   if (symbols.length === 0) return { ok: false, running: false, error: 'no symbols' };
@@ -510,13 +510,13 @@ export function startBatch(params: StartParams) {
     timer: null,
     active: true,
     status: 'Starting…',
-    legCount: 0,
+    cycleCount: 0,
     startedAt: Date.now(),
-    nextFlipAt: 0,
+    nextRunAt: 0,
   };
   flights.set(id, f);
   ensureKeepAlive();
-  console.log(`[Batch:srv] START ${id} — EMA${f.fastPeriod}/${f.slowPeriod} ${f.timeframe} ${symbols.join(', ')} x${f.count} @ ${f.volume}, every ${Math.round(f.intervalMs / 60000)}m`);
+  console.log(`[Strategy] START ${id} — EMA${f.fastPeriod}/${f.slowPeriod} ${f.timeframe} ${symbols.join(', ')} x${f.count} @ ${f.volume}, every ${Math.round(f.intervalMs / 60000)}m`);
 
   (async () => {
     // Start flat so the first signal isn't fighting a leftover position.
@@ -527,7 +527,7 @@ export function startBatch(params: StartParams) {
   return { ok: true, running: true, symbols };
 }
 
-export async function stopBatch(id: string, closeOpen = true) {
+export async function stopStrategy(id: string, closeOpen = true) {
   const f = flights.get(id);
   if (!f) { unpersist(id); return { ok: true, wasRunning: false }; }
   f.active = false;
@@ -540,14 +540,14 @@ export async function stopBatch(id: string, closeOpen = true) {
     // so loudly — the user is about to lose sight of a live position.
     f.symbols.forEach((s, i) => {
       if (states[i] !== 'FLAT') {
-        console.error(`[Batch:srv] ${id} ${s} STILL OPEN after stop (${states[i]}) — needs closing by hand`);
+        console.error(`[Strategy] ${id} ${s} STILL OPEN after stop (${states[i]}) — needs closing by hand`);
       }
     });
   }
   flights.delete(id);
   unpersist(id);
   maybeStopKeepAlive();
-  console.log(`[Batch:srv] STOP ${id}`);
+  console.log(`[Strategy] STOP ${id}`);
   return { ok: true, wasRunning: true };
 }
 
@@ -563,9 +563,9 @@ export function getStatus(id: string) {
     volume: f.volume,
     count: f.count,
     status: f.status,
-    legCount: f.legCount,
+    cycleCount: f.cycleCount,
     intervalMs: f.intervalMs,
-    msToFlip: Math.max(0, f.nextFlipAt - Date.now()),
+    msToNextRun: Math.max(0, f.nextRunAt - Date.now()),
     positions: f.symbols.map((s) => {
       const p = pos(f, s);
       return { symbol: s, dir: p.dir, openTickets: p.tickets.length, note: p.note };
@@ -574,8 +574,8 @@ export function getStatus(id: string) {
 }
 
 // ── Resume on boot ──
-export async function resumeBatches(): Promise<void> {
-  if (!PERSIST) { console.log('[Batch:srv] resume disabled (not production) — skipping'); return; }
+export async function resumeStrategies(): Promise<void> {
+  if (!PERSIST) { console.log('[Strategy] resume disabled (not production) — skipping'); return; }
   try {
     await ensureTable();
     const pool = await getPool();
@@ -584,7 +584,7 @@ export async function resumeBatches(): Promise<void> {
     // alone: not resuming a stale bot is recoverable, resuming somebody else's
     // is not.
     const [rows]: any = await pool.query(
-      `SELECT uuid, data FROM tp_mt5_batches
+      `SELECT uuid, data FROM tp_mt5_strategies
        WHERE app = ? AND epoch = ? AND updated_at >= (NOW() - INTERVAL ? HOUR)`,
       [APP_ID, FLIGHT_EPOCH, MAX_RESUME_AGE_HOURS],
     );
@@ -620,16 +620,16 @@ export async function resumeBatches(): Promise<void> {
         timer: null,
         active: true,
         status: 'Resumed',
-        legCount: Number(c.legCount) || 0,
+        cycleCount: Number(c.cycleCount) || 0,
         startedAt: Number(c.startedAt) || Date.now(),
-        nextFlipAt: Number(c.nextFlipAt) || Date.now(),
+        nextRunAt: Number(c.nextRunAt) || Date.now(),
       };
       flights.set(id, f);
-      console.log(`[Batch:srv] RESUME ${id} — EMA${f.fastPeriod}/${f.slowPeriod} ${symbols.join(', ')} (due in ${Math.round((f.nextFlipAt - Date.now()) / 1000)}s)`);
+      console.log(`[Strategy] RESUME ${id} — EMA${f.fastPeriod}/${f.slowPeriod} ${symbols.join(', ')} (due in ${Math.round((f.nextRunAt - Date.now()) / 1000)}s)`);
       ensureKeepAlive();
-      schedule(id, f, f.nextFlipAt - Date.now());
+      schedule(id, f, f.nextRunAt - Date.now());
     }
   } catch (e: any) {
-    console.error('[Batch:srv] resumeBatches error:', e?.message || e);
+    console.error('[Strategy] resumeStrategies error:', e?.message || e);
   }
 }

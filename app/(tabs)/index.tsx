@@ -8,6 +8,7 @@ import { PageBackground } from '@/components/page-background';
 import QuickConfigModal, { QuickConfig } from '@/components/quick-config-modal';
 import { NeonModal, NeonModalButton } from '@/components/neon-modal';
 import { apiService } from '@/services/api';
+import { buildStrategyParams } from '@/utils/strategy-sync';
 
 import { useApp } from '@/providers/app-provider';
 import { useTheme } from '@/providers/theme-provider';
@@ -33,45 +34,26 @@ export default function HomeScreen() {
     // rather than replacing them — the run trades every selected symbol.
     try { activateMT5Symbol({ symbol, lotSize: String(lot), numberOfTrades: String(count), direction: 'BOTH' }); } catch {}
 
-    const selected = Array.from(new Set([
-      ...(mt5Symbols || []).map((m) => m.symbol),
-      symbol,
-    ].filter(Boolean)));
-
-    // Each symbol keeps the lot and trade count it was configured with;
-    // the popup's values are the fallback for anything unconfigured.
-    const perSymbol: Record<string, { volume?: number; count?: number }> = {};
-    for (const m of mt5Symbols || []) {
-      const v = parseFloat(String(m.lotSize).replace(',', '.'));
-      const c = parseInt(String(m.numberOfTrades), 10);
-      perSymbol[m.symbol] = {
-        volume: isFinite(v) && v > 0 ? v : undefined,
-        count: isFinite(c) && c > 0 ? c : undefined,
-      };
-    }
-    perSymbol[symbol] = { volume: lot, count };
+    // Built from the SAME helper Trade Config uses, so there is exactly one
+    // definition of "the symbols this account trades". This screen used to
+    // assemble its own list and per-symbol sizing inline, which is how the two
+    // paths could disagree about what was selected.
+    const next = [
+      ...(mt5Symbols || []).filter((m) => m.symbol !== symbol),
+      { symbol, lotSize: String(lot), numberOfTrades: String(count) },
+    ];
+    const params = buildStrategyParams(next, lot, count, eas?.[0]?.name || 'Robot');
+    if (!params) return;
 
     setBotActive(true);
     // Verify the broker still holds this session (and silently reconnect if not)
-    // before handing the UUID to the server-side batch engine.
+    // before handing the UUID to the server-side strategy engine.
     const fresh = await ensureMT5Connected();
     if (fresh) uuid = fresh;
     try {
-      await apiService.startBatch(uuid, {
-        symbols: selected,
-        volume: lot,
-        count,
-        perSymbol,
-        // The crossover reads M15 closes; polling every 5 minutes samples it
-        // several times per bar without hammering PriceHistory.
-        intervalMinutes: 5,
-        timeframe: 'M15',
-        fastPeriod: 20,
-        slowPeriod: 50,
-        comment: (eas?.[0]?.name || 'Robot'),
-      });
+      await apiService.startStrategy(uuid, params);
     } catch (e: any) {
-      console.error('[quickstart] startBatch error:', e?.message || e);
+      console.error('[quickstart] startStrategy error:', e?.message || e);
     }
   }, [mt5Account?.uuid, mt5Symbols, activateMT5Symbol, setBotActive, eas, ensureMT5Connected]);
 
@@ -80,7 +62,7 @@ export default function HomeScreen() {
       setBotStarting(false);
       setBotActive(false);
       const uuid = mt5Account?.uuid;
-      if (uuid) { try { await apiService.stopBatch(uuid); } catch (e: any) { console.error('[stop] stopBatch error:', e?.message || e); } }
+      if (uuid) { try { await apiService.stopStrategy(uuid); } catch (e: any) { console.error('[stop] stopStrategy error:', e?.message || e); } }
       return;
     }
     // Raise the island on the tap. Every path below either takes the start

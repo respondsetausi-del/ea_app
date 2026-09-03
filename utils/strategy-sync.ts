@@ -16,7 +16,7 @@ export interface ConfiguredSymbol {
   numberOfTrades: string;
 }
 
-export interface BatchParams {
+export interface StrategyParams {
   symbols: string[];
   volume: number;
   count: number;
@@ -43,12 +43,12 @@ function num(value: unknown, fallback: number, integer = false): number {
  * Returns null when nothing is configured — the caller should stop the bot
  * rather than start one with an empty list.
  */
-export function buildBatchParams(
+export function buildStrategyParams(
   configured: ConfiguredSymbol[] | null | undefined,
   fallbackLot: number,
   fallbackCount: number,
   comment: string,
-): BatchParams | null {
+): StrategyParams | null {
   const list = (configured || []).filter((s) => s && s.symbol);
   if (list.length === 0) return null;
 

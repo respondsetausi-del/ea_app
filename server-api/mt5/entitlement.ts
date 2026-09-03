@@ -1,7 +1,7 @@
 // Access entitlement for server-side trading (SERVER ONLY).
 //
 // The app checks a user's access at login. That is enough while a human is
-// driving, and not enough at all here: the batch engine trades with the app
+// driving, and not enough at all here: the strategy engine trades with the app
 // closed, and — since the session keeper now revives dropped connections on
 // its own — an expired user's loop would otherwise keep trading indefinitely.
 // Nothing in the app can stop it, because the app isn't running.

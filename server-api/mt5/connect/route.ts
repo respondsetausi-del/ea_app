@@ -26,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // Hand the credentials to the session keeper so the server can revive this
-    // session on its own — the batch engine trades with the app closed.
+    // session on its own — the strategy engine trades with the app closed.
     registerSession(uuid, { server, login, password, email });
 
     return Response.json({ uuid, message: 'Account connected successfully' });

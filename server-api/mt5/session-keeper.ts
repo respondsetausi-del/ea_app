@@ -4,7 +4,7 @@
 // the dedicated server recycling. Until now only the *client* could revive one
 // — it held the credentials and called /api/mt5/reconnect before trading. That
 // works while someone has the app open, and not at all otherwise, which is
-// precisely when the server-side batch engine is doing the trading. A flight
+// precisely when the server-side strategy engine is doing the trading. A run
 // whose session expired would keep looping, fail every call, and log "hold"
 // forever while the app still showed the bot as running.
 //
@@ -30,7 +30,7 @@ interface Credentials {
   /**
    * The app account this session belongs to.
    *
-   * Without it the server cannot tell whose bot is running: the batch engine
+   * Without it the server cannot tell whose bot is running: the strategy engine
    * is keyed by MT5 uuid, access is keyed by email, and nothing joined the
    * two. That gap is what would let an expired user's server-side loop keep
    * trading forever — the app can lock them out, but the loop never sees it.
@@ -90,7 +90,7 @@ function decrypt(payload: string, key: Buffer): string | null {
 
 // ── Persistence ─────────────────────────────────────────────
 //
-// Gated the same way batch persistence is: local and production share one
+// Gated the same way strategy persistence is: local and production share one
 // MySQL, so a dev server must not resurrect production sessions.
 const PERSIST = process.env.RENDER === 'true' || process.env.BATCH_PERSIST === '1';
 
@@ -229,7 +229,7 @@ export async function ensureLive(uuid: string): Promise<boolean> {
 /**
  * Run an Api2Trade call, reviving the session and retrying once if it fails.
  *
- * This is what makes a dropped connection invisible to the batch engine: the
+ * This is what makes a dropped connection invisible to the strategy engine: the
  * first call fails, the session is rebuilt under the same uuid, and the call
  * runs again — instead of the cycle being lost.
  */

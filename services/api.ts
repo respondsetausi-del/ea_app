@@ -411,7 +411,7 @@ class ApiService {
    * EMA crossover: each cycle reads every symbol's
    * direction from its own price history and reconciles the book to match.
    */
-  async startBatch(uuid: string, opts: {
+  async startStrategy(uuid: string, opts: {
     symbols: string[];
     volume: number;
     count: number;
@@ -424,21 +424,21 @@ class ApiService {
     /** Per-symbol lot / trade-count overrides from Trade Config. */
     perSymbol?: Record<string, { volume?: number; count?: number }>;
   }): Promise<any> {
-    const res = await fetch(`${BASE_URL}/api/mt5/batch/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uuid, ...opts }) });
+    const res = await fetch(`${BASE_URL}/api/mt5/strategy/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uuid, ...opts }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || 'Failed to start');
     return data;
   }
 
-  async stopBatch(uuid: string): Promise<any> {
-    const res = await fetch(`${BASE_URL}/api/mt5/batch/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uuid }) });
+  async stopStrategy(uuid: string): Promise<any> {
+    const res = await fetch(`${BASE_URL}/api/mt5/strategy/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: uuid }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || 'Failed to stop');
     return data;
   }
 
   async getBatchStatus(uuid: string): Promise<any> {
-    const res = await fetch(`${BASE_URL}/api/mt5/batch/status?id=${encodeURIComponent(uuid)}`);
+    const res = await fetch(`${BASE_URL}/api/mt5/strategy/status?id=${encodeURIComponent(uuid)}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || 'Failed to get status');
     return data;

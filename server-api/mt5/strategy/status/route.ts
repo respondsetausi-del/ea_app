@@ -1,4 +1,4 @@
-import { getStatus } from '@/server-api/mt5/batch/engine';
+import { getStatus } from '@/server-api/mt5/strategy/engine';
 
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -7,7 +7,7 @@ export async function GET(request: Request): Promise<Response> {
     if (!id) return Response.json({ error: 'id is required' }, { status: 400 });
     return Response.json(getStatus(id));
   } catch (error: any) {
-    console.error('MT5 batch/status error:', error);
+    console.error('MT5 strategy/status error:', error);
     return Response.json({ error: error?.message || 'Failed to get status' }, { status: 502 });
   }
 }

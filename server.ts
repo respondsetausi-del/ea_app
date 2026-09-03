@@ -1436,20 +1436,24 @@ async function handleApi(request: Request): Promise<Response> {
       return new Response('Method Not Allowed', { status: 405 });
     }
 
-    if (pathname === '/api/mt5/batch/start') {
-      const route = await import('./server-api/mt5/batch/start/route.ts');
+    // /api/mt5/strategy/* is the current path. /api/mt5/batch/* is kept as an
+    // alias because an already-built APK calls it — a native binary cannot be
+    // redeployed the way the web bundle can, so removing the old path would
+    // break the bot for anyone holding that build.
+    if (pathname === '/api/mt5/strategy/start' || pathname === '/api/mt5/batch/start') {
+      const route = await import('./server-api/mt5/strategy/start/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
-    if (pathname === '/api/mt5/batch/stop') {
-      const route = await import('./server-api/mt5/batch/stop/route.ts');
+    if (pathname === '/api/mt5/strategy/stop' || pathname === '/api/mt5/batch/stop') {
+      const route = await import('./server-api/mt5/strategy/stop/route.ts');
       if (request.method === 'POST' && typeof route.POST === 'function') return route.POST(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
 
-    if (pathname === '/api/mt5/batch/status') {
-      const route = await import('./server-api/mt5/batch/status/route.ts');
+    if (pathname === '/api/mt5/strategy/status' || pathname === '/api/mt5/batch/status') {
+      const route = await import('./server-api/mt5/strategy/status/route.ts');
       if (request.method === 'GET' && typeof route.GET === 'function') return route.GET(request) as Promise<Response>;
       return new Response('Method Not Allowed', { status: 405 });
     }
@@ -1688,18 +1692,18 @@ const server = Bun.serve({
 
 console.log(`Server running on http://localhost:${server.port}`);
 
-// Restore MT5 sessions BEFORE resuming batches: a resumed flight may be due to
+// Restore MT5 sessions BEFORE resuming strategies: a resumed run may be due to
 // trade immediately, and it needs a live account to trade into. This also
 // starts the heartbeat that wakes a session back up when the broker drops it.
 import('./server-api/mt5/session-keeper.ts')
   .then((m) => m.resumeSessions?.())
   .then(() => console.log('[MT5:session] restore-on-boot complete'))
   .catch((e) => console.error('[MT5:session] restore-on-boot failed:', e?.message || e))
-  // Resume any active MT5 batches from the DB so a restart/redeploy/sleep doesn't
+  // Resume any active MT5 strategy runs from the DB so a restart/redeploy/sleep doesn't
   // kill running loops — they pick up where they left off.
-  .then(() => import('./server-api/mt5/batch/engine.ts'))
-  .then((m) => m.resumeBatches?.())
-  .then(() => console.log('[Batch:srv] resume-on-boot complete'))
-  .catch((e) => console.error('[Batch:srv] resume-on-boot failed:', e?.message || e));
+  .then(() => import('./server-api/mt5/strategy/engine.ts'))
+  .then((m) => m.resumeStrategies?.())
+  .then(() => console.log('[Strategy] resume-on-boot complete'))
+  .catch((e) => console.error('[Strategy] resume-on-boot failed:', e?.message || e));
 
 
