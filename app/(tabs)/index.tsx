@@ -65,7 +65,6 @@ export default function HomeScreen() {
         // The crossover reads M15 closes; polling every 5 minutes samples it
         // several times per bar without hammering PriceHistory.
         intervalMinutes: 5,
-        strategy: 'ma-cross',
         timeframe: 'M15',
         fastPeriod: 20,
         slowPeriod: 50,

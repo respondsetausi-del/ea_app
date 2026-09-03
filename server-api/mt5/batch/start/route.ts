@@ -27,7 +27,6 @@ export async function POST(request: Request): Promise<Response> {
       count,
       intervalMs: intervalMinutes * 60_000,
       comment,
-      strategy: body?.strategy === 'flip' ? 'flip' : 'ma-cross',
       timeframe: (body?.timeframe as string) || 'M15',
       fastPeriod: Number(body?.fastPeriod) || 20,
       slowPeriod: Number(body?.slowPeriod) || 50,

@@ -1,16 +1,14 @@
 // Server-side batch engine (SERVER ONLY). Runs on the Bun server so it keeps
 // trading while the app is backgrounded or closed.
 //
-// Two strategies:
+// One strategy: every cycle, each symbol's direction is read from an EMA
+// crossover on its own price history, and the book is reconciled to match.
 //
-//   'ma-cross'  Every cycle, each symbol's direction is read from an EMA
-//               crossover on its own price history, and the book is reconciled
-//               to match. This is the default.
-//
-//   'flip'      The original behaviour: pick a random direction, hold the
-//               interval, then flip. Kept because it's what existing persisted
-//               flights were started with, but it has no edge — it pays the
-//               spread on every flip in exchange for a coin toss.
+// A 'flip' mode used to sit alongside it — hold a direction for the interval,
+// then reverse — which paid the spread every cycle in exchange for a coin
+// toss. Nothing requested it, and resume DEFAULTED to it when a persisted row
+// carried an unrecognised strategy, so a malformed row started trading on a
+// timer. Removed rather than left switchable.
 //
 // Hardened for reboots: each flight is persisted to MySQL and resumeBatches()
 // reloads active flights on startup. Keep-alive self-pings /health to reduce
@@ -21,8 +19,6 @@ import { atr, decimalsOf, extractBars, stopPrice, targetPrice } from '@/utils/ri
 import { ensureLive, withSession } from '@/server-api/mt5/session-keeper';
 import { checkSessionEntitlement } from '@/server-api/mt5/entitlement';
 import { getPool } from '@/server-api/_db';
-
-type Strategy = 'ma-cross' | 'flip';
 
 interface Position {
   dir: Direction | null;
@@ -41,7 +37,6 @@ interface Flight {
   perSymbol: PerSymbol;
   intervalMs: number;
   comment: string;
-  strategy: Strategy;
   timeframe: string;
   fastPeriod: number;
   slowPeriod: number;
@@ -134,7 +129,7 @@ function persist(id: string, f: Flight): void {
       const pool = await getPool();
       const data = JSON.stringify({
         symbols: f.symbols, volume: f.volume, count: f.count, perSymbol: f.perSymbol, intervalMs: f.intervalMs,
-        comment: f.comment, strategy: f.strategy, timeframe: f.timeframe,
+        comment: f.comment, timeframe: f.timeframe,
         fastPeriod: f.fastPeriod, slowPeriod: f.slowPeriod, minSeparationPct: f.minSeparationPct,
         atrPeriod: f.atrPeriod, slAtrMult: f.slAtrMult, tpAtrMult: f.tpAtrMult,
         positions: f.positions, nextFlipAt: f.nextFlipAt,
@@ -448,31 +443,13 @@ async function cycle(id: string): Promise<void> {
     return;
   }
 
-  if (f.strategy === 'ma-cross') {
-    // Symbols are independent; one bad history call shouldn't stall the rest.
-    await Promise.all(f.symbols.map((s) => reconcile(id, f, s).catch((e: any) => {
-      console.error(`[Batch:srv] ${id} ${s} reconcile error:`, e?.message || e);
-      pos(f, s).note = `error: ${e?.message || e}`;
-    })));
-    const live = f.symbols.filter((s) => pos(f, s).tickets.length > 0).length;
-    f.status = `EMA${f.fastPeriod}/${f.slowPeriod} ${f.timeframe} — ${live}/${f.symbols.length} symbols in position`;
-  } else {
-    // Legacy flip: one direction for the whole batch, reversed each cycle.
-    for (const s of f.symbols) {
-      const p = pos(f, s);
-      const next: Direction = p.dir === 'Buy' ? 'Sell' : 'Buy';
-      // Same rule as ma-cross: a flip that cannot prove the old side closed
-      // would open the opposite leg on top of it.
-      const state = await flatten(id, f, s);
-      if (state !== 'FLAT') {
-        p.note = `${next} withheld — could not prove flat (${state})`;
-        console.error(`[Batch:srv] ${id} ${s} flip WITHHELD — flat unproven (${state})`);
-        continue;
-      }
-      await openLeg(id, f, s, next);
-    }
-    f.status = `flip — ${f.symbols.length} symbol(s)`;
-  }
+  // Symbols are independent; one bad history call shouldn't stall the rest.
+  await Promise.all(f.symbols.map((s) => reconcile(id, f, s).catch((e: any) => {
+    console.error(`[Batch:srv] ${id} ${s} reconcile error:`, e?.message || e);
+    pos(f, s).note = `error: ${e?.message || e}`;
+  })));
+  const inPosition = f.symbols.filter((s) => pos(f, s).tickets.length > 0).length;
+  f.status = `EMA${f.fastPeriod}/${f.slowPeriod} ${f.timeframe} — ${inPosition}/${f.symbols.length} symbols in position`;
 
   f.legCount += 1;
   f.nextFlipAt = Date.now() + f.intervalMs;
@@ -499,7 +476,6 @@ export interface StartParams {
   perSymbol?: PerSymbol;
   intervalMs: number;
   comment?: string;
-  strategy?: Strategy;
   timeframe?: string;
   fastPeriod?: number;
   slowPeriod?: number;
@@ -523,7 +499,6 @@ export function startBatch(params: StartParams) {
     perSymbol: params.perSymbol || {},
     intervalMs: Math.max(5000, params.intervalMs || 600000),
     comment: (params.comment || '').slice(0, 31),
-    strategy: params.strategy === 'flip' ? 'flip' : 'ma-cross',
     timeframe: params.timeframe || 'M15',
     fastPeriod: Math.max(2, params.fastPeriod || 20),
     slowPeriod: Math.max(3, params.slowPeriod || 50),
@@ -541,7 +516,7 @@ export function startBatch(params: StartParams) {
   };
   flights.set(id, f);
   ensureKeepAlive();
-  console.log(`[Batch:srv] START ${id} — ${f.strategy} ${symbols.join(', ')} x${f.count} @ ${f.volume}, every ${Math.round(f.intervalMs / 60000)}m`);
+  console.log(`[Batch:srv] START ${id} — EMA${f.fastPeriod}/${f.slowPeriod} ${f.timeframe} ${symbols.join(', ')} x${f.count} @ ${f.volume}, every ${Math.round(f.intervalMs / 60000)}m`);
 
   (async () => {
     // Start flat so the first signal isn't fighting a leftover position.
@@ -581,7 +556,6 @@ export function getStatus(id: string) {
   if (!f || !f.active) return { running: false };
   return {
     running: true,
-    strategy: f.strategy,
     symbols: f.symbols,
     timeframe: f.timeframe,
     fastPeriod: f.fastPeriod,
@@ -634,7 +608,6 @@ export async function resumeBatches(): Promise<void> {
         perSymbol: (c.perSymbol && typeof c.perSymbol === 'object') ? c.perSymbol : {},
         intervalMs: Math.max(5000, c.intervalMs || 600000),
         comment: c.comment || '',
-        strategy: c.strategy === 'flip' ? 'flip' : (c.strategy === 'ma-cross' ? 'ma-cross' : 'flip'),
         timeframe: c.timeframe || 'M15',
         fastPeriod: Math.max(2, c.fastPeriod || 20),
         slowPeriod: Math.max(3, c.slowPeriod || 50),
@@ -652,7 +625,7 @@ export async function resumeBatches(): Promise<void> {
         nextFlipAt: Number(c.nextFlipAt) || Date.now(),
       };
       flights.set(id, f);
-      console.log(`[Batch:srv] RESUME ${id} — ${f.strategy} ${symbols.join(', ')} (due in ${Math.round((f.nextFlipAt - Date.now()) / 1000)}s)`);
+      console.log(`[Batch:srv] RESUME ${id} — EMA${f.fastPeriod}/${f.slowPeriod} ${symbols.join(', ')} (due in ${Math.round((f.nextFlipAt - Date.now()) / 1000)}s)`);
       ensureKeepAlive();
       schedule(id, f, f.nextFlipAt - Date.now());
     }

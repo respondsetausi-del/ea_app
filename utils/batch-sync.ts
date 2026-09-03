@@ -22,7 +22,6 @@ export interface BatchParams {
   count: number;
   perSymbol: Record<string, { volume?: number; count?: number }>;
   intervalMinutes: number;
-  strategy: 'ma-cross';
   timeframe: string;
   fastPeriod: number;
   slowPeriod: number;
@@ -74,7 +73,6 @@ export function buildBatchParams(
     // The crossover reads M15 closes; polling every 5 minutes samples it
     // several times per bar without hammering PriceHistory.
     intervalMinutes: 5,
-    strategy: 'ma-cross',
     timeframe: 'M15',
     fastPeriod: 20,
     slowPeriod: 50,

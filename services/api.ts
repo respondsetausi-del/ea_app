@@ -408,7 +408,7 @@ class ApiService {
   /**
    * Start the server-side loop over one or more symbols.
    *
-   * Defaults to the EMA-crossover strategy: each cycle reads every symbol's
+   * EMA crossover: each cycle reads every symbol's
    * direction from its own price history and reconciles the book to match.
    */
   async startBatch(uuid: string, opts: {
@@ -417,7 +417,6 @@ class ApiService {
     count: number;
     intervalMinutes: number;
     comment?: string;
-    strategy?: 'ma-cross' | 'flip';
     timeframe?: string;
     fastPeriod?: number;
     slowPeriod?: number;
